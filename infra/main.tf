@@ -1,11 +1,19 @@
 # -------------
 # Root Level Terraform Configuration
 # -------------
+locals {
+  # Ensure every resource carries the environment tag even when a caller
+  # supplies its own common_tags map without app_env. The action already
+  # injects app_env into common_tags, so this merge is idempotent in CI and
+  # also gives the otherwise-unused app_env variable a concrete purpose.
+  common_tags = merge(var.common_tags, { app_env = var.app_env })
+}
+
 # Create the main resource group for all application resources
 resource "azurerm_resource_group" "main" {
   name     = var.resource_group_name
   location = var.location
-  tags     = var.common_tags
+  tags     = local.common_tags
   lifecycle {
     ignore_changes = [
       tags
@@ -19,7 +27,7 @@ resource "azurerm_resource_group" "main" {
 module "network" {
   source = "./modules/network"
 
-  common_tags                   = var.common_tags
+  common_tags                   = local.common_tags
   location                      = var.location
   resource_group_name           = azurerm_resource_group.main.name
   vnet_address_space            = var.vnet_address_space
@@ -35,7 +43,7 @@ module "monitoring" {
   source = "./modules/monitoring"
 
   app_name                            = var.app_name
-  common_tags                         = var.common_tags
+  common_tags                         = local.common_tags
   location                            = var.location
   enable_monitoring                   = var.enable_monitoring
   log_analytics_retention_days        = var.log_analytics_retention_days
@@ -50,7 +58,7 @@ module "bastion" {
   count  = var.enable_bastion ? 1 : 0
 
   app_name                          = var.app_name
-  common_tags                       = var.common_tags
+  common_tags                       = local.common_tags
   location                          = var.location
   resource_group_name               = azurerm_resource_group.main.name
   log_analytics_workspace_id        = module.monitoring.log_analytics_workspace_id
@@ -75,7 +83,7 @@ module "jumpbox" {
   count  = var.enable_jumpbox ? 1 : 0
 
   app_name                                  = var.app_name
-  common_tags                               = var.common_tags
+  common_tags                               = local.common_tags
   location                                  = var.location
   resource_group_name                       = azurerm_resource_group.main.name
   vm_size                                   = var.vm_size

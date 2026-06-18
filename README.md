@@ -316,10 +316,13 @@ with:
 ├── action.yml                       # Composite action (entry point)
 ├── .github/
 │   ├── workflows/
+│   │   ├── validate.yml               # PR gate: terraform fmt/validate + tflint
+│   │   ├── release.yml                # Tag + GitHub Release on push to main
 │   │   └── dependabot-auto-merge.yml  # Auto-approve + merge Dependabot PRs
 │   ├── scripts/
 │   │   ├── run-deploy.sh              # Action entry point (stage tfvars, overrides, run)
 │   │   └── setup-repo-protection.sh   # One-time gh-api repo hardening (admins)
+│   ├── CODEOWNERS                     # Review ownership (set your team)
 │   └── dependabot.yml
 ├── infra/                       # Bundled Terraform (Bastion + jumpbox + ...)
 │   ├── deploy-terraform.sh      # init/plan/apply/destroy orchestration
@@ -327,6 +330,7 @@ with:
 ├── examples/
 │   ├── caller-deploy.yml        # Copy into your repo's workflows
 │   └── team.tfvars              # Copy + edit for your config
+├── SECURITY.md                  # Vulnerability reporting policy
 └── README.md
 ```
 

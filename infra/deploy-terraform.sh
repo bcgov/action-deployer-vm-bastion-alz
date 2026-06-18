@@ -1,13 +1,13 @@
 #!/bin/bash
 # =============================================================================
-# Terraform Deployment Script - Run from initial-setup/infra/ or repo root
+# Terraform Deployment Script - Run from the infra/ directory
 # =============================================================================
 # Reusable script for Terraform operations (init, plan, apply, destroy, etc.)
 #
 # Usage (from repo root):
-#   ./initial-setup/infra/deploy-terraform.sh <command> [options]
+#   ./infra/deploy-terraform.sh <command> [options]
 #
-# Usage (from initial-setup/infra folder):
+# Usage (from the infra/ folder):
 #   ./deploy-terraform.sh <command> [options]
 #
 # Commands:
@@ -33,12 +33,12 @@
 #   ARM_USE_OIDC=true          - Use OIDC authentication
 #
 # Examples:
-#   ./initial-setup/infra/deploy-terraform.sh init
-#   ./initial-setup/infra/deploy-terraform.sh plan
-#   ./initial-setup/infra/deploy-terraform.sh apply
-#   ./initial-setup/infra/deploy-terraform.sh apply -target=module.jumpbox
-#   export CI=true && ./initial-setup/infra/deploy-terraform.sh apply
-#   ./initial-setup/infra/deploy-terraform.sh destroy
+#   ./infra/deploy-terraform.sh init
+#   ./infra/deploy-terraform.sh plan
+#   ./infra/deploy-terraform.sh apply
+#   ./infra/deploy-terraform.sh apply -target=module.jumpbox
+#   export CI=true && ./infra/deploy-terraform.sh apply
+#   ./infra/deploy-terraform.sh destroy
 # =============================================================================
 
 set -euo pipefail
