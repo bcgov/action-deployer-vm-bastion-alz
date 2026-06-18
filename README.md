@@ -1,31 +1,34 @@
 # action-deployer-vm-bastion-alz
 
-A reusable GitHub Actions workflow that deploys an **Azure Bastion + Linux jumpbox**
-into the BC Gov Azure Landing Zone, following ALZ policy and security best practices
-(OIDC auth, no public IPs on the VM, no SSH keys, Entra ID + MFA login).
+A reusable **GitHub composite Action** that deploys an **Azure Bastion + Linux
+jumpbox** into the BC Gov Azure Landing Zone, following ALZ policy and security
+best practices (OIDC auth, no public IPs on the VM, no SSH keys, Entra ID + MFA
+login).
 
 The Terraform that builds the Bastion, jumpbox, RBAC, schedules, monitoring and
 Bastion automation is **bundled in this repo** under [`infra/`](infra/). Consuming
-teams do not copy any Terraform: they call the reusable workflow, pass a few inputs
-(or a `.tfvars` file), and the deployment lands in **their** subscription / namespace.
+teams do not copy any Terraform: they add the action as a step, pass a few inputs
+(or a `.tfvars` file), and the deployment lands in **their** subscription /
+namespace.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-  caller["Your repo workflow<br/>uses: .../deploy.yml@v1"] --> rw["Reusable workflow<br/>(this repo)"]
-  rw --> co2["Checkout this repo<br/>(bundled infra/ at pinned SHA)"]
-  rw --> fetch["Fetch your tfvars_file<br/>via GitHub raw API"]
-  rw --> oidc["azure/login (OIDC)"]
-  rw --> tf["deploy-terraform.sh<br/>init / plan / apply / destroy"]
+  job["Your job<br/>(environment: dev, id-token: write)"] --> co["actions/checkout<br/>(your repo + tfvars)"]
+  job --> act["uses: action-deployer-vm-bastion-alz@v1<br/>(bundled infra/ at pinned ref)"]
+  act --> oidc["azure/login (OIDC)"]
+  act --> tf["deploy-terraform.sh<br/>init / plan / apply / destroy"]
   tf --> az["Azure: Bastion + jumpbox<br/>in your namespace"]
 ```
 
-The workflow checks out **only this repo** (the bundled Terraform, pinned to the
-exact workflow commit). Your `tfvars_file` is pulled directly from **your** repo
-over the GitHub raw API at the triggering ref — no full checkout of your repo is
-needed. It then runs OIDC login and the bundled `deploy-terraform.sh` against an
-`azurerm` remote-state backend you own.
+Your job checks out your repo (so the action can read your `tfvars_file`) and adds
+the action as a step. The bundled `infra/` ships with the action at the exact
+`@ref` you pin — no second checkout. Because the step runs inside **your job**,
+the job's `environment:` and OIDC `id-token` permission apply directly, and the
+environment-scoped secrets you pass as inputs resolve normally. It then runs OIDC
+login and the bundled `deploy-terraform.sh` against an `azurerm` remote-state
+backend you own.
 
 ## Quick start
 
@@ -56,7 +59,8 @@ What it sets up for each environment:
 
 > **You still add manually** (the bootstrap does not create these): the
 > `VNET_ADDRESS_SPACE` and `VM_ADMIN_LOGIN_PRINCIPAL_IDS` secrets — **both are
-> required**. Add them to the **same GitHub Environment**.
+> required** and map to the `vnet_address_space` / `vm_admin_login_principal_ids`
+> action inputs. Add them to the **same GitHub Environment**.
 
 ### Wire up the workflow
 
@@ -75,39 +79,47 @@ on:
 
 jobs:
   deploy:
-    uses: bcgov/action-deployer-vm-bastion-alz/.github/workflows/deploy.yml@v1
-    with:
-      app_name: my-app
-      app_env: ${{ inputs.environment }}
-      environment: ${{ inputs.environment }} # selects the GitHub Environment
-      tfvars_file: ./config/my-app.tfvars
-    secrets: inherit # required so environment-scoped secrets resolve
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }} # selects the GitHub Environment
+    permissions:
+      id-token: write # OIDC
+      contents: read
+    steps:
+      - uses: actions/checkout@v6 # needed so the action can read tfvars_file
+      - uses: bcgov/action-deployer-vm-bastion-alz@v1
+        with:
+          app_name: my-app
+          app_env: ${{ inputs.environment }}
+          tfvars_file: ./config/my-app.tfvars
+          backend_storage_account: ${{ vars.STORAGE_ACCOUNT_NAME }}
+          azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+          azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          vnet_name: ${{ secrets.VNET_NAME }}
+          vnet_resource_group_name: ${{ secrets.VNET_RESOURCE_GROUP_NAME }}
+          vnet_address_space: ${{ secrets.VNET_ADDRESS_SPACE }}
+          vm_admin_login_principal_ids: ${{ secrets.VM_ADMIN_LOGIN_PRINCIPAL_IDS }}
 ```
 
-> **Why `secrets: inherit`?** Environment secrets are only visible to a job that
-> runs in that environment. A job that *calls* a reusable workflow cannot declare
-> `environment:` itself, so mapping secrets explicitly would only see repo/org
-> secrets. With `inherit`, the secrets resolve inside the reusable workflow's job,
-> which **does** set the environment (from the `environment` input). Caller and
-> deployer must be in the same GitHub org for `inherit`.
+> **The job owns environment + OIDC.** Set `environment:` on the **job** (not the
+> action) so environment-scoped secrets/variables resolve and OIDC trusts the
+> job, and grant `permissions: id-token: write`. Secret values passed as `with:`
+> inputs are still masked in logs.
 
-> **Pin a version.** Reference the workflow with a tag or commit SHA
-> (`...deploy.yml@v1`). The reusable workflow checks out its **own** bundled
-> `infra/` at that exact commit via `github.job_workflow_sha`, so the Terraform
-> always matches the version you pinned — no separate ref input to keep in sync.
+> **Pin a version.** Reference the action with a tag or commit SHA
+> (`...@v1`). The bundled `infra/` ships with the action at that exact ref, so the
+> Terraform always matches the version you pinned.
 
 ## Configuration: tfvars + override inputs
 
 You can configure the deployment two ways, and combine them:
 
-- **`tfvars_file`** — a `.tfvars` file in your repo. The deployer fetches it from
-  your repository over the GitHub raw API at the ref that triggered the run
-  (`head_ref` on a PR, otherwise `ref_name`, otherwise the default branch) and uses
-  it as the base config. The path is relative to your repo root (e.g.
-  `config/my-app.tfvars`). For a **private** repo, the calling workflow must grant
-  `contents: read` so the automatic `GITHUB_TOKEN` can read the file; the deployer
-  validates the URL and fails with a clear hint if it is unreachable.
-- **Override inputs** — discrete workflow inputs (`location`, `vm_size`, `bastion_sku`,
+- **`tfvars_file`** — a `.tfvars` file in your repo. Your job runs
+  `actions/checkout`, and the action reads the file from the checked-out
+  workspace at this path (relative to your repo root, e.g.
+  `config/my-app.tfvars`). It is staged as the base config; the action fails with
+  a clear hint if the path is missing (usually a forgotten checkout).
+- **Override inputs** — discrete action inputs (`location`, `vm_size`, `bastion_sku`,
   `enable_bastion`, `enable_jumpbox`, `enable_bastion_automation`, `os_disk_size_gb`).
 
 Precedence (highest wins):
@@ -145,13 +157,17 @@ jumpbox). For any other VNet size, set both prefixes explicitly.
 
 ## Inputs
 
+All inputs are passed via `with:`. Values for `azure_*`, `vnet_*`, and
+`vm_admin_login_principal_ids` should come from **secrets** (they are masked in
+logs); `backend_storage_account` typically comes from the `STORAGE_ACCOUNT_NAME`
+variable created by the bootstrap.
+
 | Input | Required | Default | Description |
 |---|---|---|---|
 | `app_name` | yes | — | Application name; used for resource naming and the state key. |
 | `app_env` | yes | — | Environment (e.g. `tools`, `dev`, `test`, `prod`). |
 | `terraform_command` | no | `apply` | `apply`, `plan`, or `destroy`. |
-| `environment` | no | `app_env` | GitHub Environment for approvals / scoped secrets. |
-| `tfvars_file` | no | `""` | Path in your repo to a `.tfvars` file. |
+| `tfvars_file` | no | `""` | Path in your checked-out repo to a `.tfvars` file. |
 | `location` | no | `""` | Azure region override. |
 | `resource_group_name` | no | `<app_name>-<app_env>` | Resource group name override. |
 | `vm_size` | no | `""` | Jumpbox VM size override. |
@@ -160,36 +176,43 @@ jumpbox). For any other VNet size, set both prefixes explicitly.
 | `enable_bastion` | no | `""` | Deploy Bastion (`true`/`false`). |
 | `enable_jumpbox` | no | `""` | Deploy jumpbox (`true`/`false`). |
 | `enable_bastion_automation` | no | `""` | Bastion delete/recreate automation (`true`/`false`). |
-| `enable_monitoring` | no | `""` | Create/attach a Log Analytics Workspace + Bastion audit logs. Set `false` to skip the workspace entirely. |
+| `enable_monitoring` | no | `""` | Create/attach a Log Analytics Workspace + Bastion audit logs. Set `false` to skip. |
 | `existing_log_analytics_workspace_id` | no | `""` | BYO Log Analytics Workspace resource ID. When set, no workspace is created. |
-| `backend_storage_account` | no | `vars.STORAGE_ACCOUNT_NAME` | Storage account holding Terraform state. Defaults to the environment variable set by the bootstrap. |
-| `backend_resource_group` | no | `VNET_RESOURCE_GROUP_NAME` | Resource group of the state storage account. |
+| `backend_storage_account` | yes | — | Storage account for Terraform state. Pass `${{ vars.STORAGE_ACCOUNT_NAME }}`. |
+| `backend_resource_group` | no | `vnet_resource_group_name` | Resource group of the state storage account. |
 | `backend_container_name` | no | `tfstate` | Blob container for state. |
 | `backend_state_key` | no | `<app_name>/<app_env>/terraform.tfstate` | State blob key. |
-| `runs_on` | no | `ubuntu-24.04` | Runner label. |
+| `azure_client_id` | yes | — | OIDC app (client) ID. Pass from a secret. |
+| `azure_tenant_id` | yes | — | Azure AD tenant ID. Pass from a secret. |
+| `azure_subscription_id` | yes | — | Target subscription ID. Pass from a secret. |
+| `vnet_name` | yes | — | Existing spoke VNet name. Pass from a secret. |
+| `vnet_resource_group_name` | yes | — | Resource group of the existing VNet. Pass from a secret. |
+| `vnet_address_space` | yes | — | Address space of the VNet (e.g. `10.46.115.0/24`). Pass from a secret. |
+| `vm_admin_login_principal_ids` | yes | — | Comma-separated Entra object IDs (users/groups) for jumpbox login. Pass from a secret. See [Jumpbox access](#jumpbox-access-vm-admin-login). |
 
-## Secrets
+> **Network details are secrets by design.** `vnet_name`,
+> `vnet_resource_group_name`, and `vnet_address_space` are required and should be
+> passed from secrets, never as plain literals or committed tfvars. This keeps
+> VNet names and IP ranges out of workflow logs, PRs, and committed config, and
+> puts the responsibility on the calling team to supply (and safeguard) their own
+> network information.
 
-Pass these with `secrets: inherit`. The [initial setup](#initial-setup-one-time-per-environment)
-script creates most as **environment** secrets. Add `VNET_ADDRESS_SPACE` and
-`VM_ADMIN_LOGIN_PRINCIPAL_IDS` to the same GitHub Environment yourself — both are
-required.
+### Secrets created by the bootstrap
 
-> **Network details are mandatory secrets by design.** `VNET_NAME`,
-> `VNET_RESOURCE_GROUP_NAME`, and `VNET_ADDRESS_SPACE` are required and passed as
-> secrets, never as plain inputs or tfvars. This keeps VNet names and IP ranges
-> out of workflow logs, PRs, and committed config, and puts the responsibility on
-> the calling team to supply (and safeguard) their own network information.
+The [initial setup](#initial-setup-one-time-per-environment) script creates these
+as **environment** secrets/variables; map them into the action inputs as shown in
+the caller example:
 
-| Secret | Required | Created by bootstrap | Description |
+| GitHub item | Kind | Created by bootstrap | Maps to input |
 |---|---|---|---|
-| `AZURE_CLIENT_ID` | yes | yes | OIDC app (client) ID. |
-| `AZURE_TENANT_ID` | yes | yes | Azure AD tenant ID. |
-| `AZURE_SUBSCRIPTION_ID` | yes | yes | Target subscription ID. |
-| `VNET_NAME` | yes | yes | Existing spoke VNet name (platform team). |
-| `VNET_RESOURCE_GROUP_NAME` | yes | yes | Resource group of the existing VNet. |
-| `VNET_ADDRESS_SPACE` | yes | no | Address space of the VNet (e.g. `10.46.115.0/24`). Add manually. |
-| `VM_ADMIN_LOGIN_PRINCIPAL_IDS` | yes | no | Comma-separated Entra object IDs (users/groups) for jumpbox login. Add manually. See [Jumpbox access](#jumpbox-access-vm-admin-login). |
+| `AZURE_CLIENT_ID` | secret | yes | `azure_client_id` |
+| `AZURE_TENANT_ID` | secret | yes | `azure_tenant_id` |
+| `AZURE_SUBSCRIPTION_ID` | secret | yes | `azure_subscription_id` |
+| `VNET_NAME` | secret | yes | `vnet_name` |
+| `VNET_RESOURCE_GROUP_NAME` | secret | yes | `vnet_resource_group_name` |
+| `STORAGE_ACCOUNT_NAME` | variable | yes | `backend_storage_account` |
+| `VNET_ADDRESS_SPACE` | secret | **no — add manually** | `vnet_address_space` |
+| `VM_ADMIN_LOGIN_PRINCIPAL_IDS` | secret | **no — add manually** | `vm_admin_login_principal_ids` |
 
 ## Jumpbox access (VM Admin Login)
 
@@ -269,7 +292,7 @@ BYO example (resource ID, **not** just the workspace GUID):
 existing_log_analytics_workspace_id = "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.OperationalInsights/workspaces/<name>"
 ```
 
-or as a workflow input:
+or as an action input:
 
 ```yaml
 with:
@@ -290,13 +313,12 @@ with:
 
 ```text
 .
+├── action.yml                       # Composite action (entry point)
 ├── .github/
 │   ├── workflows/
-│   │   ├── deploy.yml                 # Reusable workflow (workflow_call)
 │   │   └── dependabot-auto-merge.yml  # Auto-approve + merge Dependabot PRs
 │   ├── scripts/
-│   │   ├── fetch-tfvars.sh            # Pull caller tfvars via GitHub raw API
-│   │   ├── run-deploy.sh              # CI entry point (override -vars, runs deploy)
+│   │   ├── run-deploy.sh              # Action entry point (stage tfvars, overrides, run)
 │   │   └── setup-repo-protection.sh   # One-time gh-api repo hardening (admins)
 │   └── dependabot.yml
 ├── infra/                       # Bundled Terraform (Bastion + jumpbox + ...)

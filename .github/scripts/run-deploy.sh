@@ -1,34 +1,49 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run-deploy.sh - CI entry point for the reusable VM + Bastion deployer
+# run-deploy.sh - entry point for the VM + Bastion composite action
 # =============================================================================
-# Invoked by .github/workflows/deploy.yml. Responsibilities:
-#   1. Assemble override -var arguments from OVERRIDE_* env vars (non-empty).
-#   2. Run the bundled deploy-terraform.sh with the requested command.
-#
-# The caller's tfvars file (if any) is fetched separately by fetch-tfvars.sh
-# and written to INFRA_DIR/terraform.tfvars, which deploy-terraform.sh
-# auto-detects and passes via -var-file.
+# Invoked by action.yml. Responsibilities:
+#   1. Stage the caller's tfvars file (if any) into the bundled infra.
+#   2. Assemble override -var arguments from OVERRIDE_* env vars (non-empty).
+#   3. Convert the comma-separated VM admin login IDs to a Terraform list.
+#   4. Run the bundled deploy-terraform.sh with the requested command.
 #
 # Terraform precedence reminder (highest wins):
 #   -var (CLI)  >  -var-file=terraform.tfvars  >  TF_VAR_* env vars
 # So OVERRIDE_* inputs win over the tfvars file, which wins over secret-backed
 # TF_VAR_* defaults that are not present in the tfvars file.
 #
-# Required env (set by the workflow):
+# Required env (set by the action):
 #   DEPLOYER_INFRA_DIR            Absolute path to the bundled infra directory
+#                                 (github.action_path/infra)
 #   TERRAFORM_COMMAND            apply | plan | destroy
 #   VM_ADMIN_LOGIN_PRINCIPAL_IDS  Comma-separated Entra object IDs (user/group)
 #                                 -> converted to TF_VAR_vm_admin_login_principal_ids
 # Optional env:
+#   TFVARS_FILE_INPUT            Path (relative to GITHUB_WORKSPACE) to a .tfvars file
 #   OVERRIDE_<var>               Override values applied as -var <var>=<value>
 # =============================================================================
 set -euo pipefail
 
 INFRA_DIR="${DEPLOYER_INFRA_DIR:?DEPLOYER_INFRA_DIR is required}"
 COMMAND="${TERRAFORM_COMMAND:-apply}"
+WORKSPACE="${GITHUB_WORKSPACE:-$PWD}"
 
-# 1. Build override -var args from OVERRIDE_* env vars that are non-empty.
+# 1. Stage the caller's tfvars file (if provided) as terraform.tfvars so the
+#    deploy script auto-detects it and passes it via -var-file. The path is
+#    relative to the caller's checked-out workspace.
+if [[ -n "${TFVARS_FILE_INPUT:-}" ]]; then
+  src="${TFVARS_FILE_INPUT}"
+  [[ -f "$src" ]] || src="${WORKSPACE}/${TFVARS_FILE_INPUT}"
+  if [[ ! -f "$src" ]]; then
+    echo "::error::tfvars_file '${TFVARS_FILE_INPUT}' not found. Did the caller job run actions/checkout before this action?" >&2
+    exit 1
+  fi
+  echo "Using tfvars file: ${src}"
+  cp "$src" "${INFRA_DIR}/terraform.tfvars"
+fi
+
+# 2. Build override -var args from OVERRIDE_* env vars that are non-empty.
 declare -A overrides=(
   [location]="${OVERRIDE_location:-}"
   [vm_size]="${OVERRIDE_vm_size:-}"
@@ -47,7 +62,7 @@ for key in "${!overrides[@]}"; do
   [[ -n "$value" ]] && var_args+=("-var=${key}=${value}")
 done
 
-# 2. Convert the comma-separated VM admin login principal IDs into a Terraform
+# 3. Convert the comma-separated VM admin login principal IDs into a Terraform
 #    list(string). These grant "Virtual Machine Administrator Login" on the
 #    jumpbox; without at least one, nobody can Entra-SSH in. Each value must be
 #    an Entra object ID (GUID) for a user OR a group - not a UPN, email, or name.
@@ -82,7 +97,7 @@ else
   echo "Configured ${#principal_items[@]} VM admin login principal ID(s)."
 fi
 
-# 3. Run the bundled deploy script. CI=true triggers auto-approve for
+# 4. Run the bundled deploy script. CI=true triggers auto-approve for
 #    apply/destroy inside deploy-terraform.sh.
 cd "$INFRA_DIR"
 echo "Running: deploy-terraform.sh ${COMMAND} ${var_args[*]:-}"

@@ -1,0 +1,174 @@
+name: Deploy VM + Bastion (ALZ)
+description: >-
+  Deploy an Azure Bastion + Linux jumpbox into the BC Gov Azure Landing Zone
+  using the bundled Terraform. Run this as a step inside a job that sets
+  `environment:` (for OIDC + environment-scoped secrets) and grants
+  `id-token: write`.
+
+# Composite action. The bundled infra/ ships with the action and is resolved
+# automatically at the @ref the caller pins -- no second checkout, no
+# secrets: inherit. The caller's job provides the GitHub Environment and OIDC
+# permission; secrets are passed in explicitly as inputs.
+
+inputs:
+  # --- Identity / namespace ---------------------------------------------------
+  app_name:
+    description: "Application name. Used for resource naming and the Terraform state key."
+    required: true
+  app_env:
+    description: "Application environment (e.g. tools, dev, test, prod)."
+    required: true
+  terraform_command:
+    description: "Terraform operation to run: apply, plan, or destroy."
+    required: false
+    default: "apply"
+
+  # --- Configuration source ---------------------------------------------------
+  tfvars_file:
+    description: "Path (relative to the caller's checked-out workspace) to a .tfvars file. Staged as terraform.tfvars."
+    required: false
+    default: ""
+
+  # --- Common override inputs (override values from tfvars_file) --------------
+  location:
+    description: "Azure region. Overrides tfvars when set."
+    required: false
+    default: ""
+  resource_group_name:
+    description: "Resource group name. Defaults to <app_name>-<app_env> when empty."
+    required: false
+    default: ""
+  vm_size:
+    description: "Jumpbox VM size. Overrides tfvars when set."
+    required: false
+    default: ""
+  os_disk_size_gb:
+    description: "Jumpbox OS disk size in GB. Overrides tfvars when set."
+    required: false
+    default: ""
+  bastion_sku:
+    description: "Azure Bastion SKU (Standard or Premium). Overrides tfvars when set."
+    required: false
+    default: ""
+  enable_bastion:
+    description: "Deploy Azure Bastion (true/false). Overrides tfvars when set."
+    required: false
+    default: ""
+  enable_jumpbox:
+    description: "Deploy the jumpbox VM (true/false). Overrides tfvars when set."
+    required: false
+    default: ""
+  enable_bastion_automation:
+    description: "Enable Bastion delete/recreate automation runbooks (true/false). Overrides tfvars when set."
+    required: false
+    default: ""
+  enable_monitoring:
+    description: "Create/attach a Log Analytics Workspace and enable Bastion audit diagnostics (true/false). Set false to skip the workspace entirely. Overrides tfvars when set."
+    required: false
+    default: ""
+  existing_log_analytics_workspace_id:
+    description: "Resource ID of an existing Log Analytics Workspace (BYO LAW). When set, no workspace is created. Overrides tfvars when set."
+    required: false
+    default: ""
+
+  # --- Remote state backend ---------------------------------------------------
+  backend_storage_account:
+    description: "Storage account name holding Terraform state. Pass ${{ vars.STORAGE_ACCOUNT_NAME }} (set by initial-azure-setup.sh)."
+    required: true
+  backend_resource_group:
+    description: "Resource group of the state storage account. Defaults to vnet_resource_group_name when empty."
+    required: false
+    default: ""
+  backend_container_name:
+    description: "Blob container for Terraform state."
+    required: false
+    default: "tfstate"
+  backend_state_key:
+    description: "State blob key. Defaults to <app_name>/<app_env>/terraform.tfstate when empty."
+    required: false
+    default: ""
+
+  # --- Azure identity (pass from secrets) ------------------------------------
+  azure_client_id:
+    description: "Azure AD app (OIDC) client ID."
+    required: true
+  azure_tenant_id:
+    description: "Azure AD tenant ID."
+    required: true
+  azure_subscription_id:
+    description: "Target Azure subscription ID."
+    required: true
+
+  # --- Network (pass from secrets; never plain text) -------------------------
+  vnet_name:
+    description: "Existing spoke VNet name (from the platform team)."
+    required: true
+  vnet_resource_group_name:
+    description: "Resource group of the existing VNet."
+    required: true
+  vnet_address_space:
+    description: "Address space of the existing VNet (e.g. 10.46.115.0/24)."
+    required: true
+
+  # --- Jumpbox access (pass from secrets) ------------------------------------
+  vm_admin_login_principal_ids:
+    description: "Comma-separated Entra object IDs (users and/or groups) granted Virtual Machine Administrator Login on the jumpbox. Required: with none, nobody can Entra-SSH in. Use object IDs (GUIDs), not UPNs / emails / display names."
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Azure CLI Login (OIDC)
+      uses: azure/login@v3
+      with:
+        client-id: ${{ inputs.azure_client_id }}
+        tenant-id: ${{ inputs.azure_tenant_id }}
+        subscription-id: ${{ inputs.azure_subscription_id }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v4
+
+    - name: Run Terraform
+      shell: bash
+      env:
+        CI: "true"
+        ARM_USE_OIDC: "true"
+        # Bundled infra ships with the action; github.action_path is its checkout.
+        DEPLOYER_INFRA_DIR: "${{ github.action_path }}/infra"
+        # tfvars path is relative to the caller's checked-out workspace.
+        TFVARS_FILE_INPUT: ${{ inputs.tfvars_file }}
+        TERRAFORM_COMMAND: ${{ inputs.terraform_command }}
+        # Backend configuration for Terraform state
+        BACKEND_RESOURCE_GROUP: ${{ inputs.backend_resource_group != '' && inputs.backend_resource_group || inputs.vnet_resource_group_name }}
+        BACKEND_STORAGE_ACCOUNT: ${{ inputs.backend_storage_account }}
+        BACKEND_CONTAINER_NAME: ${{ inputs.backend_container_name }}
+        BACKEND_STATE_KEY: ${{ inputs.backend_state_key != '' && inputs.backend_state_key || format('{0}/{1}/terraform.tfstate', inputs.app_name, inputs.app_env) }}
+        # Core identity (env vars; tfvars_file can override these)
+        TF_VAR_app_name: ${{ inputs.app_name }}
+        TF_VAR_app_env: ${{ inputs.app_env }}
+        TF_VAR_resource_group_name: ${{ inputs.resource_group_name != '' && inputs.resource_group_name || format('{0}-{1}', inputs.app_name, inputs.app_env) }}
+        TF_VAR_common_tags: >-
+          {"environment":"${{ inputs.app_env }}","app_env":"${{ inputs.app_env }}","repo_name":"${{ github.event.repository.name }}","managed_by":"Terraform"}
+        # Sensitive variables from inputs (sourced from secrets by the caller)
+        TF_VAR_subscription_id: ${{ inputs.azure_subscription_id }}
+        TF_VAR_client_id: ${{ inputs.azure_client_id }}
+        TF_VAR_tenant_id: ${{ inputs.azure_tenant_id }}
+        TF_VAR_vnet_name: ${{ inputs.vnet_name }}
+        TF_VAR_vnet_resource_group_name: ${{ inputs.vnet_resource_group_name }}
+        TF_VAR_vnet_address_space: ${{ inputs.vnet_address_space }}
+        # Comma-separated object IDs; run-deploy.sh validates them and converts
+        # the value into the Terraform list(string) TF_VAR it expects.
+        VM_ADMIN_LOGIN_PRINCIPAL_IDS: ${{ inputs.vm_admin_login_principal_ids }}
+        # Override inputs -> applied as -var (highest precedence) when non-empty
+        OVERRIDE_location: ${{ inputs.location }}
+        OVERRIDE_vm_size: ${{ inputs.vm_size }}
+        OVERRIDE_os_disk_size_gb: ${{ inputs.os_disk_size_gb }}
+        OVERRIDE_bastion_sku: ${{ inputs.bastion_sku }}
+        OVERRIDE_enable_bastion: ${{ inputs.enable_bastion }}
+        OVERRIDE_enable_jumpbox: ${{ inputs.enable_jumpbox }}
+        OVERRIDE_enable_bastion_automation: ${{ inputs.enable_bastion_automation }}
+        OVERRIDE_enable_monitoring: ${{ inputs.enable_monitoring }}
+        OVERRIDE_existing_log_analytics_workspace_id: ${{ inputs.existing_log_analytics_workspace_id }}
+      run: |
+        chmod +x "${GITHUB_ACTION_PATH}/.github/scripts/run-deploy.sh" "${GITHUB_ACTION_PATH}/infra/deploy-terraform.sh"
+        "${GITHUB_ACTION_PATH}/.github/scripts/run-deploy.sh"

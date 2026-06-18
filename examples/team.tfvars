@@ -1,8 +1,8 @@
 # -----------------------------------------------------------------------------
 # Example team configuration for the VM + Bastion deployer.
 #
-# Copy this into YOUR repo (e.g. config/my-app.tfvars) and point the reusable
-# workflow at it via the `tfvars_file` input. Override only what you need;
+# Copy this into YOUR repo (e.g. config/my-app.tfvars) and point the composite
+# action at it via the `tfvars_file` input. Override only what you need;
 # everything here except app_name/app_env has a sensible default.
 #
 # DO NOT put secrets here. subscription_id, client_id, tenant_id and the VNet
