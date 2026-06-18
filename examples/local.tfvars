@@ -23,14 +23,14 @@ use_oidc  = false
 client_id = ""
 
 # Your target Azure subscription and the BC Gov tenant.
-subscription_id = "REPLACE_ME"  # e.g. 00000000-0000-0000-0000-000000000000
-tenant_id       = "REPLACE_ME"  # e.g. 00000000-0000-0000-0000-000000000000
+subscription_id = "REPLACE_ME" # e.g. 00000000-0000-0000-0000-000000000000
+tenant_id       = "REPLACE_ME" # e.g. 00000000-0000-0000-0000-000000000000
 
 # =============================================================================
 # Identity / namespace
 # =============================================================================
-app_name            = "my-app"      # Prefix for all Azure resource names
-app_env             = "tools"       # Environment label: tools | dev | test | prod
+app_name            = "my-app"       # Prefix for all Azure resource names
+app_env             = "tools"        # Environment label: tools | dev | test | prod
 resource_group_name = "my-app-tools" # Must be explicit locally; GHA defaults to "<app_name>-<app_env>"
 
 # Tags applied to all resources. GHA injects these automatically from the
@@ -52,16 +52,16 @@ common_tags = {
 # by the BC Gov platform team. Provide the same network details that you
 # would store as GitHub Secrets (VNET_NAME, VNET_RESOURCE_GROUP_NAME, etc.)
 # in the GHA workflow.
-vnet_name                = "REPLACE_ME"  # Existing spoke VNet name
-vnet_resource_group_name = "REPLACE_ME"  # Resource group that owns the VNet
+vnet_name                = "REPLACE_ME" # Existing spoke VNet name
+vnet_resource_group_name = "REPLACE_ME" # Resource group that owns the VNet
 
 # Full address space of the VNet (not just a subnet CIDR).
-vnet_address_space = "REPLACE_ME"  # e.g. 10.46.115.0/24
+vnet_address_space = "REPLACE_ME" # e.g. 10.46.115.0/24
 
 # Subnet CIDRs — must be within the VNet space and not already allocated.
 # AzureBastionSubnet must be /26 or larger (Azure hard requirement).
-bastion_subnet_address_prefix = "REPLACE_ME"  # e.g. 10.46.115.64/26  (must be /26 or larger)
-jumpbox_subnet_address_prefix = "REPLACE_ME"  # e.g. 10.46.115.128/28
+bastion_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.64/26  (must be /26 or larger)
+jumpbox_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.128/28
 
 # Optional: override the jumpbox subnet name when another namespace already
 # uses the default "jumpbox-subnet" in this VNet.
