@@ -109,6 +109,12 @@ inputs:
   vnet_address_space:
     description: "Address space of the existing VNet (e.g. 10.46.115.0/24)."
     required: true
+  bastion_subnet_address_prefix:
+    description: "CIDR for the AzureBastionSubnet. Must be /26 or larger (e.g. 10.46.115.64/26). Pass from a secret to keep IP ranges out of logs."
+    required: true
+  jumpbox_subnet_address_prefix:
+    description: "CIDR for the jumpbox subnet (e.g. 10.46.115.128/28). Pass from a secret to keep IP ranges out of logs."
+    required: true
 
   # --- Jumpbox access (pass from secrets) ------------------------------------
   vm_admin_login_principal_ids:
@@ -156,6 +162,8 @@ runs:
         TF_VAR_vnet_name: ${{ inputs.vnet_name }}
         TF_VAR_vnet_resource_group_name: ${{ inputs.vnet_resource_group_name }}
         TF_VAR_vnet_address_space: ${{ inputs.vnet_address_space }}
+        TF_VAR_bastion_subnet_address_prefix: ${{ inputs.bastion_subnet_address_prefix }}
+        TF_VAR_jumpbox_subnet_address_prefix: ${{ inputs.jumpbox_subnet_address_prefix }}
         # Comma-separated object IDs; run-deploy.sh validates them and converts
         # the value into the Terraform list(string) TF_VAR it expects.
         VM_ADMIN_LOGIN_PRINCIPAL_IDS: ${{ inputs.vm_admin_login_principal_ids }}

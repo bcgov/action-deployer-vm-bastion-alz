@@ -57,10 +57,10 @@ What it sets up for each environment:
   `VNET_NAME`, `VNET_RESOURCE_GROUP_NAME`.
 - **Environment variable**: `STORAGE_ACCOUNT_NAME` (the Terraform state account).
 
-> **You still add manually** (the bootstrap does not create these): the
-> `VNET_ADDRESS_SPACE` and `VM_ADMIN_LOGIN_PRINCIPAL_IDS` secrets — **both are
-> required** and map to the `vnet_address_space` / `vm_admin_login_principal_ids`
-> action inputs. Add them to the **same GitHub Environment**.
+> **You still add manually** (the bootstrap does not create these): `VNET_ADDRESS_SPACE`,
+> `BASTION_SUBNET_ADDRESS_PREFIX`, `JUMPBOX_SUBNET_ADDRESS_PREFIX`, and
+> `VM_ADMIN_LOGIN_PRINCIPAL_IDS` — all four are **required** secrets. Add them to the
+> **same GitHub Environment**.
 
 ### Wire up the workflow
 
@@ -98,6 +98,8 @@ jobs:
           vnet_name: ${{ secrets.VNET_NAME }}
           vnet_resource_group_name: ${{ secrets.VNET_RESOURCE_GROUP_NAME }}
           vnet_address_space: ${{ secrets.VNET_ADDRESS_SPACE }}
+          bastion_subnet_address_prefix: ${{ secrets.BASTION_SUBNET_ADDRESS_PREFIX }}
+          jumpbox_subnet_address_prefix: ${{ secrets.JUMPBOX_SUBNET_ADDRESS_PREFIX }}
           vm_admin_login_principal_ids: ${{ secrets.VM_ADMIN_LOGIN_PRINCIPAL_IDS }}
 ```
 
@@ -136,19 +138,15 @@ The deployer creates two subnets inside your **existing** spoke VNet (owned by t
 platform team): the jumpbox subnet and `AzureBastionSubnet`. Configure them through
 your `tfvars_file`:
 
-| Variable | Default | Notes |
+| Variable | Required | Notes |
 |---|---|---|
-| `vnet_name` | — (secret) | Existing spoke VNet. |
-| `vnet_resource_group_name` | — (secret) | Resource group of the VNet. |
-| `vnet_address_space` | — (secret) | CIDR of the VNet; used to auto-derive subnets. |
-| `bastion_subnet_name` | `AzureBastionSubnet` | Must stay `AzureBastionSubnet` (Azure requirement). |
-| `jumpbox_subnet_name` | `jumpbox-subnet` | Jumpbox subnet name. |
-| `bastion_subnet_address_prefix` | _(derived)_ | Explicit Bastion CIDR. **Must be /26 or larger.** |
-| `jumpbox_subnet_address_prefix` | _(derived)_ | Explicit jumpbox CIDR. |
-
-When the subnet prefixes are left empty they are derived from `vnet_address_space`
-assuming a **/24 spoke** (`<base>.64/26` for Bastion, `<base>.128/28` for the
-jumpbox). For any other VNet size, set both prefixes explicitly.
+| `vnet_name` | yes (secret) | Existing spoke VNet. |
+| `vnet_resource_group_name` | yes (secret) | Resource group of the VNet. |
+| `vnet_address_space` | yes (secret) | CIDR of the VNet. |
+| `bastion_subnet_address_prefix` | yes (secret) | CIDR for `AzureBastionSubnet`. **Must be /26 or larger.** |
+| `jumpbox_subnet_address_prefix` | yes (secret) | CIDR for the jumpbox subnet. |
+| `bastion_subnet_name` | no | Must stay `AzureBastionSubnet` (Azure requirement). |
+| `jumpbox_subnet_name` | no | Defaults to `jumpbox-subnet`. |
 
 > **Validation.** Terraform rejects the deploy if `bastion_subnet_address_prefix`
 > is smaller than /26 (Azure Bastion requires at least a /26), if any subnet/VNet
@@ -188,14 +186,16 @@ variable created by the bootstrap.
 | `vnet_name` | yes | — | Existing spoke VNet name. Pass from a secret. |
 | `vnet_resource_group_name` | yes | — | Resource group of the existing VNet. Pass from a secret. |
 | `vnet_address_space` | yes | — | Address space of the VNet (e.g. `10.46.115.0/24`). Pass from a secret. |
+| `bastion_subnet_address_prefix` | yes | — | CIDR for `AzureBastionSubnet` (e.g. `10.46.115.64/26`). Must be /26 or larger. Pass from a secret. |
+| `jumpbox_subnet_address_prefix` | yes | — | CIDR for the jumpbox subnet (e.g. `10.46.115.128/28`). Pass from a secret. |
 | `vm_admin_login_principal_ids` | yes | — | Comma-separated Entra object IDs (users/groups) for jumpbox login. Pass from a secret. See [Jumpbox access](#jumpbox-access-vm-admin-login). |
 
-> **Network details are secrets by design.** `vnet_name`,
-> `vnet_resource_group_name`, and `vnet_address_space` are required and should be
-> passed from secrets, never as plain literals or committed tfvars. This keeps
-> VNet names and IP ranges out of workflow logs, PRs, and committed config, and
-> puts the responsibility on the calling team to supply (and safeguard) their own
-> network information.
+> **Network details are secrets by design.** `vnet_name`, `vnet_resource_group_name`,
+> `vnet_address_space`, `bastion_subnet_address_prefix`, and `jumpbox_subnet_address_prefix`
+> are required and should be passed from secrets, never as plain literals or committed
+> tfvars. This keeps VNet names and IP ranges out of workflow logs, PRs, and committed
+> config, and puts the responsibility on the calling team to supply (and safeguard) their
+> own network information.
 
 ### Secrets created by the bootstrap
 
@@ -212,6 +212,8 @@ the caller example:
 | `VNET_RESOURCE_GROUP_NAME` | secret | yes | `vnet_resource_group_name` |
 | `STORAGE_ACCOUNT_NAME` | variable | yes | `backend_storage_account` |
 | `VNET_ADDRESS_SPACE` | secret | **no — add manually** | `vnet_address_space` |
+| `BASTION_SUBNET_ADDRESS_PREFIX` | secret | **no — add manually** | `bastion_subnet_address_prefix` |
+| `JUMPBOX_SUBNET_ADDRESS_PREFIX` | secret | **no — add manually** | `jumpbox_subnet_address_prefix` |
 | `VM_ADMIN_LOGIN_PRINCIPAL_IDS` | secret | **no — add manually** | `vm_admin_login_principal_ids` |
 
 ## Jumpbox access (VM Admin Login)

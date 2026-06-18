@@ -69,5 +69,7 @@ jobs:
           vnet_name: ${{ secrets.VNET_NAME }}
           vnet_resource_group_name: ${{ secrets.VNET_RESOURCE_GROUP_NAME }}
           vnet_address_space: ${{ secrets.VNET_ADDRESS_SPACE }}
+          bastion_subnet_address_prefix: ${{ secrets.BASTION_SUBNET_ADDRESS_PREFIX }}
+          jumpbox_subnet_address_prefix: ${{ secrets.JUMPBOX_SUBNET_ADDRESS_PREFIX }}
           # Comma-separated Entra object IDs (users/groups) for jumpbox login
           vm_admin_login_principal_ids: ${{ secrets.VM_ADMIN_LOGIN_PRINCIPAL_IDS }}

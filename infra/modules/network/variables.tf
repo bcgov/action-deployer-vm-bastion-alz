@@ -54,15 +54,13 @@ variable "bastion_subnet_name" {
 }
 
 variable "bastion_subnet_address_prefix" {
-  description = "Explicit CIDR for the AzureBastionSubnet. Must be /26 or larger. Empty derives from vnet_address_space."
+  description = "CIDR for the AzureBastionSubnet. Must be /26 or larger (e.g. 10.46.115.64/26)."
   type        = string
-  default     = ""
   nullable    = false
 }
 
 variable "jumpbox_subnet_address_prefix" {
-  description = "Explicit CIDR for the jumpbox subnet. Empty derives from vnet_address_space."
+  description = "CIDR for the jumpbox subnet (e.g. 10.46.115.128/28)."
   type        = string
-  default     = ""
   nullable    = false
 }

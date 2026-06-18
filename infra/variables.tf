@@ -83,31 +83,29 @@ variable "bastion_subnet_name" {
 }
 
 variable "bastion_subnet_address_prefix" {
-  description = "Explicit CIDR for the AzureBastionSubnet. Must be /26 or larger (e.g. /26, /25, /24). Leave empty to derive from vnet_address_space (assumes a /24 spoke)."
+  description = "CIDR for the AzureBastionSubnet. Must be /26 or larger (e.g. 10.46.115.64/26)."
   type        = string
-  default     = ""
   nullable    = false
 
   validation {
-    condition     = var.bastion_subnet_address_prefix == "" || can(cidrhost(var.bastion_subnet_address_prefix, 0))
-    error_message = "bastion_subnet_address_prefix must be a valid CIDR (e.g. 10.46.115.64/26) or empty to auto-derive."
+    condition     = can(cidrhost(var.bastion_subnet_address_prefix, 0))
+    error_message = "bastion_subnet_address_prefix must be a valid CIDR (e.g. 10.46.115.64/26)."
   }
 
   validation {
-    condition     = var.bastion_subnet_address_prefix == "" || try(tonumber(split("/", var.bastion_subnet_address_prefix)[1]) <= 26, false)
+    condition     = try(tonumber(split("/", var.bastion_subnet_address_prefix)[1]) <= 26, false)
     error_message = "AzureBastionSubnet must be /26 or larger (prefix length <= 26). Azure Bastion requires at least a /26 subnet."
   }
 }
 
 variable "jumpbox_subnet_address_prefix" {
-  description = "Explicit CIDR for the jumpbox subnet. Leave empty to derive from vnet_address_space (assumes a /24 spoke)."
+  description = "CIDR for the jumpbox subnet (e.g. 10.46.115.128/28)."
   type        = string
-  default     = ""
   nullable    = false
 
   validation {
-    condition     = var.jumpbox_subnet_address_prefix == "" || can(cidrhost(var.jumpbox_subnet_address_prefix, 0))
-    error_message = "jumpbox_subnet_address_prefix must be a valid CIDR (e.g. 10.46.115.128/28) or empty to auto-derive."
+    condition     = can(cidrhost(var.jumpbox_subnet_address_prefix, 0))
+    error_message = "jumpbox_subnet_address_prefix must be a valid CIDR (e.g. 10.46.115.128/28)."
   }
 }
 

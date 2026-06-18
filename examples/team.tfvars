@@ -24,11 +24,9 @@ app_env  = "tools"
 # bastion_subnet_name = "AzureBastionSubnet"
 # jumpbox_subnet_name = "jumpbox-subnet"
 #
-# Explicit subnet CIDRs. Leave unset to auto-derive from the VNet (assumes a
-# /24 spoke). The AzureBastionSubnet MUST be /26 or larger (/26, /25, /24...).
-# Set both explicitly if your VNet is not a /24.
-# bastion_subnet_address_prefix = "10.46.115.64/26"
-# jumpbox_subnet_address_prefix = "10.46.115.128/28"
+# Subnet CIDRs are required. The AzureBastionSubnet must be /26 or larger.
+bastion_subnet_address_prefix = "x.x.x.x/26"
+jumpbox_subnet_address_prefix = "x.x.x.x/28"
 
 # --- Tags --------------------------------------------------------------------
 # The workflow sets a default common_tags map. Uncomment to fully control tags.
