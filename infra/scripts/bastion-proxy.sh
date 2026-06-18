@@ -34,25 +34,24 @@
 #   -g, --resource-group    Resource group containing Bastion and VM   [required]
 #   -b, --bastion-name      Name of the Azure Bastion host             [required]
 #   -v, --vm-name           Name of the jumpbox VM                     [required]
-#   -s, --subscription      Azure subscription ID to use               [default: built-in repo default]
+#   -s, --subscription      Azure subscription ID to use               [default: current active subscription]
+#   -t, --tenant            Entra tenant ID to enforce                 [default: current login tenant]
 #   -p, --port              Starting SOCKS5 port (default: 8228)       [optional]
 #   -h, --help              Show this help and exit
 #
 # EXAMPLES
-#   # Entra ID (AAD) auth:
+#   # Basic — uses the currently active az subscription and tenant:
 #   ./scripts/bastion-proxy.sh -g <resource-group> -b <bastion-name> -v <vm-name>
 #
-#   # Override the active Azure subscription if needed:
-#   ./scripts/bastion-proxy.sh -g <resource-group> -b <bastion-name> -v <vm-name> -s <subscription-id>
+#   # Specify subscription and/or tenant explicitly:
+#   ./scripts/bastion-proxy.sh -g <resource-group> -b <bastion-name> -v <vm-name> \
+#     -s <subscription-id> -t <tenant-id>
 #
-#   # Example for this repo deployment:
-#   ./scripts/bastion-proxy.sh -s ffc5e617-7f2d-4ddb-8b57-33fc43989a8c -g eo-dmi-alz-bastion-jumpbox-tools -b eo-dmi-alz-bastion-jumpbox-bastion -v eo-dmi-alz-bastion-jumpbox-jumpbox
-#
-#   # Derive names from Terraform outputs (run from initial-setup/infra/):
-#   ./scripts/bastion-proxy.sh \
-#     -g "$(terraform output -raw resource_group_name)" \
-#     -b "$(terraform output -raw jumpbox_vm_name | sed 's/-jumpbox$/-bastion/')" \
-#     -v "$(terraform output -raw jumpbox_vm_name)"
+#   # Derive names from Terraform outputs (run from the repo root):
+#   RG="<app_name>-<app_env>"
+#   BASTION_NAME="$(cd infra && terraform output -raw bastion_resource_id | sed 's|.*/||')"
+#   VM_NAME="$(cd infra && terraform output -raw jumpbox_vm_id | sed 's|.*/||')"
+#   ./infra/scripts/bastion-proxy.sh -g "$RG" -b "$BASTION_NAME" -v "$VM_NAME"
 #
 # =============================================================================
 
@@ -61,8 +60,6 @@ set -euo pipefail
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 DEFAULT_SOCKS_PORT=8228
-DEFAULT_SUBSCRIPTION_ID="ffc5e617-7f2d-4ddb-8b57-33fc43989a8c"
-DEFAULT_TENANT_ID="6fdb5200-3d0d-4a8a-b036-d3685e359adc"
 
 # ── Colours (only when writing to a terminal) ─────────────────────────────────
 
@@ -650,7 +647,8 @@ find_free_port() {
 RESOURCE_GROUP=""
 BASTION_NAME=""
 VM_NAME=""
-SUBSCRIPTION_ID="$DEFAULT_SUBSCRIPTION_ID"
+SUBSCRIPTION_ID=""  # empty = use the currently active subscription
+TENANT_ID=""        # empty = no tenant enforcement
 START_PORT=$DEFAULT_SOCKS_PORT
 
 while [[ $# -gt 0 ]]; do
@@ -659,6 +657,7 @@ while [[ $# -gt 0 ]]; do
     -b|--bastion-name)   BASTION_NAME="$2";   shift 2 ;;
     -v|--vm-name)        VM_NAME="$2";        shift 2 ;;
     -s|--subscription)   SUBSCRIPTION_ID="$2"; shift 2 ;;
+    -t|--tenant)         TENANT_ID="$2";       shift 2 ;;
     -p|--port)           START_PORT="$2";     shift 2 ;;
     -h|--help)           usage ;;
     *) err "Unknown argument: $1"; exit 1 ;;
@@ -696,22 +695,30 @@ ok "Prerequisites satisfied"
 
 # ── Authentication ────────────────────────────────────────────────────────────
 
-info "Checking Azure CLI login status for tenant ${DEFAULT_TENANT_ID}..."
+if [[ -n "$TENANT_ID" ]]; then
+  info "Checking Azure CLI login status for tenant ${TENANT_ID}..."
+else
+  info "Checking Azure CLI login status..."
+fi
 if ! az account show &>/dev/null 2>&1; then
   echo ""
   info "Not logged in. Starting Entra browser authentication..."
   echo ""
-  warn "Complete the MFA prompt in the browser window opened by Azure CLI for tenant ${DEFAULT_TENANT_ID}."
-  echo ""
-  az login --tenant "$DEFAULT_TENANT_ID"
+  if [[ -n "$TENANT_ID" ]]; then
+    warn "Complete the MFA prompt in the browser window opened by Azure CLI for tenant ${TENANT_ID}."
+    echo ""
+    az login --tenant "$TENANT_ID"
+  else
+    az login
+  fi
   az account show &>/dev/null 2>&1 || { err "Azure CLI login did not complete successfully."; exit 1; }
 else
   CURRENT_TENANT_ID=$(az account show --query tenantId --output tsv | trim_cr)
-  if [[ -n "$CURRENT_TENANT_ID" && "$CURRENT_TENANT_ID" != "$DEFAULT_TENANT_ID" ]]; then
+  if [[ -n "$TENANT_ID" && -n "$CURRENT_TENANT_ID" && "$CURRENT_TENANT_ID" != "$TENANT_ID" ]]; then
     echo ""
-    warn "Azure CLI is currently using tenant ${CURRENT_TENANT_ID}. Re-authenticating with BC Gov tenant ${DEFAULT_TENANT_ID}..."
+    warn "Azure CLI is currently using tenant ${CURRENT_TENANT_ID}. Re-authenticating with tenant ${TENANT_ID}..."
     echo ""
-    az login --tenant "$DEFAULT_TENANT_ID"
+    az login --tenant "$TENANT_ID"
     az account show &>/dev/null 2>&1 || { err "Azure CLI login did not complete successfully."; exit 1; }
   fi
   warn "Already logged in. Azure CLI sessions expire 12h after Azure CLI login."
@@ -719,7 +726,9 @@ else
 fi
 
 CURRENT_TENANT_ID=$(az account show --query tenantId --output tsv | trim_cr)
-[[ "$CURRENT_TENANT_ID" == "$DEFAULT_TENANT_ID" ]] || { err "Azure CLI is not using the BC Gov tenant ${DEFAULT_TENANT_ID}."; exit 1; }
+if [[ -n "$TENANT_ID" ]]; then
+  [[ "$CURRENT_TENANT_ID" == "$TENANT_ID" ]] || { err "Azure CLI is not using the expected tenant ${TENANT_ID}."; exit 1; }
+fi
 
 # Record authentication time and compute the 12h Entra ID session expiry.
 # If already logged in, LOGIN_EPOCH is set to now (the original login time

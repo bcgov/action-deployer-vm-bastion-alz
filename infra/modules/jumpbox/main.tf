@@ -157,7 +157,9 @@ resource "azapi_resource" "python310" {
     }
   }
 
-  tags = var.common_tags
+  # runtimeEnvironments API (2024-10-23) accepts at most 3 tags; drop app_env which
+  # duplicates the environment tag value in this context.
+  tags = { for k, v in var.common_tags : k => v if k != "app_env" }
   lifecycle {
     ignore_changes = [tags]
   }

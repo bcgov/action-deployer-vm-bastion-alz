@@ -26,14 +26,18 @@
 #   .\scripts\bastion-proxy.ps1 -ResourceGroup <rg> -BastionName <name> -VmName <vm>
 #
 # EXAMPLES
-#   # Entra ID (AAD) auth:
+#   # Basic — uses the currently active az subscription and tenant:
 #   .\scripts\bastion-proxy.ps1 -ResourceGroup <resource-group> -BastionName <bastion-name> -VmName <vm-name>
 #
-#   # Override the active Azure subscription if needed:
-#   .\scripts\bastion-proxy.ps1 -ResourceGroup <resource-group> -BastionName <bastion-name> -VmName <vm-name> -SubscriptionId <subscription-id>
+#   # Specify subscription and/or tenant explicitly:
+#   .\scripts\bastion-proxy.ps1 -ResourceGroup <resource-group> -BastionName <bastion-name> -VmName <vm-name> `
+#     -SubscriptionId <subscription-id> -TenantId <tenant-id>
 #
-#   # Example for this repo deployment:
-#   .\scripts\bastion-proxy.ps1 -SubscriptionId ffc5e617-7f2d-4ddb-8b57-33fc43989a8c -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools -BastionName eo-dmi-alz-bastion-jumpbox-bastion -VmName eo-dmi-alz-bastion-jumpbox-jumpbox
+#   # Derive names from Terraform outputs (run from the repo root):
+#   $rg          = "<app_name>-<app_env>"
+#   $bastionName = (cd infra; terraform output -raw bastion_resource_id).Split('/')[-1]
+#   $vmName      = (cd infra; terraform output -raw jumpbox_vm_id).Split('/')[-1]
+#   .\infra\scripts\bastion-proxy.ps1 -ResourceGroup $rg -BastionName $bastionName -VmName $vmName
 #
 # =============================================================================
 
@@ -52,7 +56,10 @@ param(
     [string]$VmName,
 
     [Alias('s')]
-    [string]$SubscriptionId = 'ffc5e617-7f2d-4ddb-8b57-33fc43989a8c',
+    [string]$SubscriptionId = '',  # empty = use the currently active subscription
+
+    [Alias('t')]
+    [string]$TenantId = '',        # empty = no tenant enforcement
 
     [Alias('p')]
     [int]$Port = 8228
@@ -61,7 +68,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:AzCommandPath = $null
-$script:DefaultTenantId = '6fdb5200-3d0d-4a8a-b036-d3685e359adc'
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -490,14 +496,24 @@ Write-Ok 'Prerequisites satisfied'
 
 # ── Authentication ────────────────────────────────────────────────────────────
 
-Write-Info "Checking Azure CLI login status for tenant $script:DefaultTenantId..."
+if ($TenantId) {
+    Write-Info "Checking Azure CLI login status for tenant $TenantId..."
+}
+else {
+    Write-Info 'Checking Azure CLI login status...'
+}
 if (-not (Test-AzLogin)) {
     Write-Host ''
     Write-Info 'Not logged in. Starting Entra browser authentication...'
     Write-Host ''
-    Write-Warn "Complete the MFA prompt in the browser window opened by Azure CLI for tenant $script:DefaultTenantId."
-    Write-Host ''
-    az login --tenant $script:DefaultTenantId
+    if ($TenantId) {
+        Write-Warn "Complete the MFA prompt in the browser window opened by Azure CLI for tenant $TenantId."
+        Write-Host ''
+        az login --tenant $TenantId
+    }
+    else {
+        az login
+    }
     if (-not (Test-AzLogin)) {
         Write-Err 'Azure CLI login did not complete successfully.'
         exit 1
@@ -505,9 +521,9 @@ if (-not (Test-AzLogin)) {
 }
 else {
     $currentTenantId = az account show --query tenantId --output tsv
-    if ($currentTenantId -and $currentTenantId -ne $script:DefaultTenantId) {
-        Write-Warn "Azure CLI is currently using tenant $currentTenantId. Re-authenticating with BC Gov tenant $script:DefaultTenantId..."
-        az login --tenant $script:DefaultTenantId
+    if ($TenantId -and $currentTenantId -and $currentTenantId -ne $TenantId) {
+        Write-Warn "Azure CLI is currently using tenant $currentTenantId. Re-authenticating with tenant $TenantId..."
+        az login --tenant $TenantId
         if (-not (Test-AzLogin)) {
             Write-Err 'Azure CLI login did not complete successfully.'
             exit 1
@@ -518,8 +534,8 @@ else {
 }
 
 $currentTenantId = az account show --query tenantId --output tsv
-if ($currentTenantId -ne $script:DefaultTenantId) {
-    Write-Err "Azure CLI is not using the BC Gov tenant $script:DefaultTenantId."
+if ($TenantId -and $currentTenantId -ne $TenantId) {
+    Write-Err "Azure CLI is not using the expected tenant $TenantId."
     exit 1
 }
 

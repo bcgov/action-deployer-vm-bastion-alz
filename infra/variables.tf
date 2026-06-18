@@ -110,9 +110,10 @@ variable "jumpbox_subnet_address_prefix" {
 }
 
 variable "client_id" {
-  description = "Azure client ID for the service principal"
+  description = "Azure client ID for the service principal or OIDC application. Leave empty when using Azure CLI authentication (use_oidc = false) — the CLI token is used instead."
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 

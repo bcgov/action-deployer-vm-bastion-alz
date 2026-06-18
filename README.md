@@ -367,7 +367,8 @@ with:
 │   └── modules/                 # network, bastion, jumpbox, monitoring
 ├── examples/
 │   ├── caller-deploy.yml        # Copy into your repo's workflows
-│   └── team.tfvars              # Copy + edit for your config
+│   ├── team.tfvars              # Copy + edit for your config (GitHub Actions)
+│   └── local.tfvars             # Copy to infra/terraform.tfvars for local use
 ├── SECURITY.md                  # Vulnerability reporting policy
 └── README.md
 ```
@@ -394,12 +395,215 @@ REVIEW_COUNT=2 REQUIRED_CHECKS="terraform-validate,lint" \
   ./.github/scripts/setup-repo-protection.sh
 ```
 
-## Local use
+## Local deployment
 
-The bundled script also runs locally for ad-hoc work:
+The same `infra/deploy-terraform.sh` script that the composite action runs in CI works directly on a developer workstation — useful for ad-hoc deploys, one-off troubleshooting, or testing before wiring up CI. It uses Azure CLI authentication instead of OIDC.
+
+### Prerequisites
+
+Install the following tools before running locally:
+
+| Tool | Minimum version | Install guide |
+|---|---|---|
+| [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | 2.65+ | See platform instructions below |
+| [Terraform](https://developer.hashicorp.com/terraform/install) | 1.12+ | See platform instructions below |
+| [Git](https://git-scm.com/downloads) | 2.x | Pre-installed on macOS/Linux |
+| Bash | 4.x+ | Windows: use **Git Bash** (from Git for Windows) or **WSL2** |
+
+Verify after installing:
 
 ```bash
-cd infra
-export BACKEND_RESOURCE_GROUP=... BACKEND_STORAGE_ACCOUNT=... BACKEND_STATE_KEY=...
-./deploy-terraform.sh plan
+az version         # must show "azure-cli": "2.65.0" or higher
+terraform version  # must show Terraform v1.12.x or higher
+bash --version     # must be 4.x+ (macOS ships 3.2 — install via Homebrew)
 ```
+
+#### macOS (Homebrew)
+
+```bash
+brew update
+brew install azure-cli
+brew tap hashicorp/tap && brew install hashicorp/tap/terraform
+brew install bash          # macOS ships Bash 3.2; the deploy script requires 4+
+```
+
+#### Windows (winget)
+
+```powershell
+winget install Microsoft.AzureCLI
+winget install HashiCorp.Terraform
+# Git for Windows (includes Git Bash):
+winget install Git.Git
+```
+
+Run all deploy commands in **Git Bash**, not PowerShell or cmd.exe — the deploy script is a Bash script.
+
+#### Linux (apt / manual)
+
+```bash
+# Azure CLI
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+# Terraform — download the binary for your architecture
+TERRAFORM_VERSION=1.12.0
+curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" -o tf.zip
+unzip tf.zip && sudo mv terraform /usr/local/bin/ && rm tf.zip
+```
+
+### Required Azure permissions
+
+Your user account needs the following RBAC roles on the target subscription:
+
+| Role | Scope | Purpose |
+|---|---|---|
+| **Contributor** | Target subscription | Create resource group, VM, Bastion, Automation Account, etc. |
+| **User Access Administrator** | Target subscription | Assign RBAC roles (VM Admin Login) to Entra principals |
+| **Network Contributor** | VNet resource group | Create subnets in the existing spoke VNet |
+
+> **Owner** on the subscription covers all three. For least-privilege, scope **Network Contributor** to just the VNet resource group rather than the whole subscription.
+
+### Step-by-step local deployment
+
+**1. Clone this repo at a specific version**
+
+```bash
+git clone https://github.com/bcgov/action-deployer-vm-bastion-alz.git
+cd action-deployer-vm-bastion-alz
+git checkout v1          # pin to a release tag: v1, v1.2.3, or a commit SHA
+```
+
+**2. Log in to Azure**
+
+```bash
+# Log in (optionally pass --tenant <tenant-id> to target a specific Entra tenant)
+az login
+
+# Set the target subscription
+az account set --subscription "<your-subscription-id>"
+
+# Verify
+az account show --query "[name, id]" -o tsv
+```
+
+**3. Create a local tfvars file**
+
+```bash
+cp examples/local.tfvars infra/terraform.tfvars
+# Edit infra/terraform.tfvars — replace every REPLACE_ME placeholder
+```
+
+`infra/terraform.tfvars` is git-ignored, so real subscription IDs, VNet names, and principal IDs will never be committed. See the [local vs GHA differences table](#local-vs-gha-differences) for what goes in each field.
+
+**4. Set backend environment variables**
+
+```bash
+export BACKEND_RESOURCE_GROUP="<resource-group-of-storage-account>"
+export BACKEND_STORAGE_ACCOUNT="<storage-account-name>"    # from STORAGE_ACCOUNT_NAME in GHA
+export BACKEND_STATE_KEY="my-app/tools/terraform.tfstate"  # must match the key used in CI
+# BACKEND_CONTAINER_NAME defaults to "tfstate" — override if your container differs
+```
+
+Use the same storage account created by `initial-azure-setup.sh`. Sharing the backend with CI means local and CI deployments operate on the same state file.
+
+**5. Plan and apply**
+
+```bash
+./infra/deploy-terraform.sh plan     # preview changes (no Azure writes)
+./infra/deploy-terraform.sh apply    # deploy (prompts for confirmation — no auto-approve locally)
+./infra/deploy-terraform.sh destroy  # tear down (also prompts for confirmation)
+```
+
+### Local vs GHA differences
+
+| Concern | GitHub Actions | Local |
+|---|---|---|
+| **Authentication** | OIDC federated credential | Azure CLI (`az login`) |
+| `use_oidc` | `true` (default) | `false` — set in `infra/terraform.tfvars` |
+| `client_id` | Set from OIDC app registration | `""` — not needed for CLI auth |
+| **Sensitive variables** | GitHub Environment secrets → `TF_VAR_*` env vars | All in `infra/terraform.tfvars` (git-ignored) |
+| `vm_admin_login_principal_ids` | Comma-separated string from secret; converted by `run-deploy.sh` | HCL list in tfvars: `["guid1", "guid2"]` |
+| `common_tags` | JSON map injected as `TF_VAR_common_tags` env var | HCL map literal in tfvars |
+| `resource_group_name` | Defaults to `<app_name>-<app_env>` | Must be set explicitly in tfvars |
+| **Auto-approve** | Yes (`CI=true`) | No — script prompts `yes` before apply/destroy |
+| **State backend** | Set via action inputs | Set via `BACKEND_*` env vars |
+
+### Local tfvars fields
+
+The [`examples/local.tfvars`](examples/local.tfvars) template includes every required variable with a `REPLACE_ME` placeholder. Key fields that differ from [`examples/team.tfvars`](examples/team.tfvars):
+
+| Variable | Value for local | Notes |
+|---|---|---|
+| `use_oidc` | `false` | Use CLI auth locally; `true` (default) in GHA |
+| `client_id` | `""` | Not needed for CLI auth |
+| `subscription_id` | Your subscription GUID | Same as `AZURE_SUBSCRIPTION_ID` secret in GHA |
+| `tenant_id` | Your Entra tenant GUID | Same as `AZURE_TENANT_ID` secret in GHA |
+| `resource_group_name` | `"my-app-tools"` | GHA computes `<app_name>-<app_env>`; explicit locally |
+| `common_tags` | HCL map `{ environment = "..." }` | GHA injects as JSON env var |
+| `vnet_name` | Your VNet name | Same value as `VNET_NAME` GitHub secret |
+| `vnet_resource_group_name` | VNet resource group | Same as `VNET_RESOURCE_GROUP_NAME` secret |
+| `vnet_address_space` | VNet CIDR | Same as `VNET_ADDRESS_SPACE` secret |
+| `bastion_subnet_address_prefix` | `/26` or larger CIDR | Same as `BASTION_SUBNET_ADDRESS_PREFIX` secret |
+| `jumpbox_subnet_address_prefix` | Any valid CIDR | Same as `JUMPBOX_SUBNET_ADDRESS_PREFIX` secret |
+| `vm_admin_login_principal_ids` | `["guid1", "guid2"]` | HCL list, not comma-separated string |
+
+> **`vm_admin_login_principal_ids` format difference**: The GHA action's `run-deploy.sh` converts a comma-separated string to a Terraform `list(string)`. Locally, skip that conversion and write the list directly in the tfvars file:
+>
+> ```hcl
+> vm_admin_login_principal_ids = ["11111111-1111-1111-1111-111111111111"]
+> ```
+
+### Useful local commands
+
+```bash
+# Show Terraform outputs after a successful apply
+./infra/deploy-terraform.sh output
+
+# Target a specific module (e.g. re-apply Bastion only)
+./infra/deploy-terraform.sh apply -target=module.bastion
+
+# Validate syntax and format — no Azure auth or backend needed
+./infra/deploy-terraform.sh validate
+./infra/deploy-terraform.sh fmt
+
+# List all resources tracked in state
+./infra/deploy-terraform.sh state list
+
+# Refresh state from Azure (after out-of-band changes)
+./infra/deploy-terraform.sh refresh
+
+# Remove a resource from state without destroying it in Azure
+./infra/deploy-terraform.sh state rm <resource.address>
+```
+
+**Connect to the jumpbox after deployment:**
+
+Use the bundled scripts to open a SOCKS5 proxy tunnel through Azure Bastion. They handle Azure CLI login, extension installation, VM start-up, and Bastion health checks automatically.
+
+Derive the names from Terraform outputs (run from the repo root):
+
+```bash
+# Extract resource names from Terraform state
+RG="<app_name>-<app_env>"   # e.g. my-app-tools
+BASTION_NAME="$(cd infra && terraform output -raw bastion_resource_id | sed 's|.*/||')"
+VM_NAME="$(cd infra && terraform output -raw jumpbox_vm_id            | sed 's|.*/||')"
+```
+
+**macOS / Linux / Windows (Git Bash)** — [`infra/scripts/bastion-proxy.sh`](infra/scripts/bastion-proxy.sh):
+
+```bash
+./infra/scripts/bastion-proxy.sh \
+  -g "$RG" \
+  -b "$BASTION_NAME" \
+  -v "$VM_NAME"
+```
+
+**Windows (PowerShell)** — [`infra/scripts/bastion-proxy.ps1`](infra/scripts/bastion-proxy.ps1):
+
+```powershell
+.\infra\scripts\bastion-proxy.ps1 `
+  -ResourceGroup $RG `
+  -BastionName   $BASTION_NAME `
+  -VmName        $VM_NAME
+```
+
+Both scripts open Edge or Chrome pre-configured with the proxy once the tunnel is ready. Traffic routed through the SOCKS5 proxy is resolved and forwarded by the jumpbox, giving access to private PaaS endpoints without a VPN. The default port is `8228`; override with `-p`/`-Port`.
