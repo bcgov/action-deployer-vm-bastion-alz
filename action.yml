@@ -33,7 +33,7 @@ inputs:
   location:
     description: "Azure region. Overrides tfvars when set."
     required: false
-    default: ""
+    default: "Canada Central"
   resource_group_name:
     description: "Resource group name. Defaults to <app_name>-<app_env> when empty."
     required: false
