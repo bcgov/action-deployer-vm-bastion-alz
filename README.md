@@ -135,8 +135,8 @@ So an override input always wins over the same key in your tfvars file.
 ## Network configuration
 
 The deployer creates two subnets inside your **existing** spoke VNet (owned by the
-platform team): the jumpbox subnet and `AzureBastionSubnet`. Configure them through
-your `tfvars_file`:
+platform team): a jumpbox subnet and `AzureBastionSubnet`. Both are always created —
+`enable_bastion: false` skips the Bastion host resource but not the subnet.
 
 | Variable | Required | Notes |
 |---|---|---|
@@ -146,12 +146,47 @@ your `tfvars_file`:
 | `bastion_subnet_address_prefix` | yes (secret) | CIDR for `AzureBastionSubnet`. **Must be /26 or larger.** |
 | `jumpbox_subnet_address_prefix` | yes (secret) | CIDR for the jumpbox subnet. |
 | `bastion_subnet_name` | no | Must stay `AzureBastionSubnet` (Azure requirement). |
-| `jumpbox_subnet_name` | no | Defaults to `jumpbox-subnet`. |
+| `jumpbox_subnet_name` | no | Defaults to `jumpbox-subnet`. **Set a unique value per namespace.** |
 
 > **Validation.** Terraform rejects the deploy if `bastion_subnet_address_prefix`
 > is smaller than /26 (Azure Bastion requires at least a /26), if any subnet/VNet
 > value is not a valid CIDR, or if `bastion_subnet_name` is changed away from
 > `AzureBastionSubnet`.
+
+### One Bastion per VNet
+
+Azure enforces two hard constraints that matter when multiple namespaces share a
+spoke VNet:
+
+**1. `AzureBastionSubnet` is a VNet-level singleton.**
+A VNet can have only one subnet named `AzureBastionSubnet`, and Azure Bastion
+requires exactly that name. This deployer always creates it. If another namespace
+already owns `AzureBastionSubnet` in the target VNet, the deploy will fail — there
+is no workaround short of using a separate spoke VNet.
+
+> **In the BC Gov ALZ pattern each license plate gets its own spoke VNet**, so this
+> is normally not an issue. It only arises if two license plates are deliberately
+> sharing a single spoke.
+
+**2. Jumpbox subnet names must be unique per VNet.**
+The `jumpbox_subnet_name` input defaults to `jumpbox-subnet`. If another namespace
+has already claimed that name in the same VNet, Terraform will attempt to modify the
+existing subnet and Azure will block it. Always override this to something
+namespace-specific:
+
+```yaml
+# In the caller workflow:
+- uses: bcgov/action-deployer-vm-bastion-alz@v1
+  with:
+    jumpbox_subnet_name: myapp-jumpbox-subnet   # unique per namespace
+    ...
+```
+
+or in your `tfvars_file`:
+
+```hcl
+jumpbox_subnet_name = "myapp-jumpbox-subnet"
+```
 
 ## Inputs
 
@@ -171,7 +206,8 @@ variable created by the bootstrap.
 | `vm_size` | no | `""` | Jumpbox VM size override. |
 | `os_disk_size_gb` | no | `""` | Jumpbox OS disk size override. |
 | `bastion_sku` | no | `""` | Bastion SKU override (`Standard`/`Premium`). |
-| `enable_bastion` | no | `""` | Deploy Bastion (`true`/`false`). |
+| `jumpbox_subnet_name` | no | `jumpbox-subnet` | Name of the jumpbox subnet. **Must be unique within the VNet** — override when another namespace already uses the default name. |
+| `enable_bastion` | no | `""` | Deploy Bastion host (`true`/`false`). Note: `AzureBastionSubnet` is always created regardless. |
 | `enable_jumpbox` | no | `""` | Deploy jumpbox (`true`/`false`). |
 | `enable_bastion_automation` | no | `""` | Bastion delete/recreate automation (`true`/`false`). |
 | `enable_monitoring` | no | `""` | Create/attach a Log Analytics Workspace + Bastion audit logs. Set `false` to skip. |
