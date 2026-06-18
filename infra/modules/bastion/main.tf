@@ -49,7 +49,7 @@ resource "azurerm_bastion_host" "main" {
 }
 
 resource "azurerm_monitor_diagnostic_setting" "bastion_audit" {
-  count                      = var.log_analytics_workspace_id != "" ? 1 : 0
+  count                      = var.enable_monitoring ? 1 : 0
   name                       = "${var.app_name}-bastion-audit"
   target_resource_id         = azurerm_bastion_host.main.id
   log_analytics_workspace_id = var.log_analytics_workspace_id

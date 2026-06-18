@@ -32,6 +32,12 @@ variable "common_tags" {
   nullable    = false
 }
 
+variable "enable_monitoring" {
+  description = "Whether monitoring is enabled. Controls the Bastion audit diagnostic setting; must be a static bool so Terraform can resolve count at plan time."
+  type        = bool
+  default     = false
+}
+
 variable "log_analytics_workspace_id" {
   description = "Resource ID of the Log Analytics workspace that receives Bastion audit logs. Empty disables the audit diagnostic setting."
   type        = string

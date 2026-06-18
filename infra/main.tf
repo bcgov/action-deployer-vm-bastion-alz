@@ -61,6 +61,7 @@ module "bastion" {
   common_tags                       = local.common_tags
   location                          = var.location
   resource_group_name               = azurerm_resource_group.main.name
+  enable_monitoring                 = var.enable_monitoring
   log_analytics_workspace_id        = module.monitoring.log_analytics_workspace_id
   bastion_subnet_id                 = module.network.bastion_subnet_id
   bastion_sku                       = var.bastion_sku

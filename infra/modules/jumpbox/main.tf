@@ -320,7 +320,7 @@ resource "azurerm_role_assignment" "automation_network_contributor" {
 }
 
 resource "azurerm_role_assignment" "automation_bastion_subnet_network_contributor" {
-  count = var.enable_bastion && var.enable_bastion_automation && var.bastion_subnet_id != null && trimspace(var.bastion_subnet_id) != "" ? 1 : 0
+  count = var.enable_bastion && var.enable_bastion_automation ? 1 : 0
 
   scope                = var.bastion_subnet_id
   role_definition_name = "Network Contributor"
