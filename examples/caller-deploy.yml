@@ -1,0 +1,66 @@
+# Copy this into YOUR repo at .github/workflows/deploy-vm-bastion.yml
+# It calls the reusable deployer to provision an Azure Bastion + Linux jumpbox
+# into your subscription / namespace.
+#
+# Prerequisite (one-time per environment): run initial-azure-setup.sh to create
+# the OIDC identity, environment-scoped secrets, and Terraform state storage.
+# See the deployer README "Initial setup" section.
+
+name: Deploy VM + Bastion
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (must match a GitHub Environment + its OIDC federated credential)"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+          - tools
+      terraform_command:
+        description: "Terraform command"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - apply
+          - plan
+          - destroy
+
+permissions:
+  id-token: write # OIDC
+  contents: read
+
+jobs:
+  deploy:
+    # Pin @v1 (or a commit SHA) in real usage. The reusable workflow checks out
+    # its own bundled infra/ at that exact ref automatically.
+    uses: bcgov/action-deployer-vm-bastion-alz/.github/workflows/deploy.yml@v1
+    with:
+      app_name: my-app
+      # app_env + environment both come from the dispatch input so resource
+      # naming, the state key, and the GitHub Environment all line up.
+      app_env: ${{ inputs.environment }}
+      environment: ${{ inputs.environment }}
+      terraform_command: ${{ inputs.terraform_command }}
+      # Optional: full config checked into your repo (see examples/team.tfvars)
+      tfvars_file: ./config/my-app.tfvars
+      # Optional override inputs (win over tfvars_file). Uncomment as needed:
+      # location: Canada Central
+      # vm_size: Standard_B2als_v2
+      # bastion_sku: Standard
+      # enable_bastion_automation: "true"
+      # backend_storage_account defaults to the STORAGE_ACCOUNT_NAME environment
+      # variable created by initial-azure-setup.sh. Set it only to override.
+      # backend_storage_account: myteamtfstate
+      # backend_state_key: defaults to <app_name>/<app_env>/terraform.tfstate
+    # `secrets: inherit` passes the caller's secrets to the reusable workflow,
+    # whose job runs in the GitHub Environment selected above — so the
+    # environment-scoped secrets (AZURE_CLIENT_ID, VNET_NAME, ...) resolve there.
+    # A job that calls a reusable workflow cannot declare `environment:` itself,
+    # so explicit secret mapping would only see repo/org secrets, not env ones.
+    secrets: inherit
