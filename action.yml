@@ -164,11 +164,12 @@ runs:
         TF_VAR_vnet_address_space: ${{ inputs.vnet_address_space }}
         TF_VAR_bastion_subnet_address_prefix: ${{ inputs.bastion_subnet_address_prefix }}
         TF_VAR_jumpbox_subnet_address_prefix: ${{ inputs.jumpbox_subnet_address_prefix }}
+        TF_VAR_location: ${{ inputs.location }}
         # Comma-separated object IDs; run-deploy.sh validates them and converts
         # the value into the Terraform list(string) TF_VAR it expects.
         VM_ADMIN_LOGIN_PRINCIPAL_IDS: ${{ inputs.vm_admin_login_principal_ids }}
         # Override inputs -> applied as -var (highest precedence) when non-empty
-        OVERRIDE_location: ${{ inputs.location }}
+       
         OVERRIDE_vm_size: ${{ inputs.vm_size }}
         OVERRIDE_os_disk_size_gb: ${{ inputs.os_disk_size_gb }}
         OVERRIDE_bastion_sku: ${{ inputs.bastion_sku }}
