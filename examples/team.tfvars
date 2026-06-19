@@ -25,8 +25,8 @@ app_env  = "tools"
 # jumpbox_subnet_name = "jumpbox-subnet"
 #
 # Subnet CIDRs are required. The AzureBastionSubnet must be /26 or larger.
-bastion_subnet_address_prefix = "x.x.x.x/26"
-jumpbox_subnet_address_prefix = "x.x.x.x/28"
+bastion_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.64/26  (must be /26 or larger)
+jumpbox_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.128/28
 
 # --- Tags --------------------------------------------------------------------
 # The workflow sets a default common_tags map. Uncomment to fully control tags.
@@ -68,4 +68,4 @@ log_analytics_sku            = "PerGB2018"
 # Bring-your-own Log Analytics Workspace (BYO LAW). When set, no workspace is
 # created and Bastion audit logs attach to this existing one. Must be the FULL
 # resource ID, not just the workspace GUID. Requires enable_monitoring = true.
-# existing_log_analytics_workspace_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/central-logging/providers/Microsoft.OperationalInsights/workspaces/central-law"
+# existing_log_analytics_workspace_id = "/subscriptions/REPLACE_ME/resourceGroups/REPLACE_ME/providers/Microsoft.OperationalInsights/workspaces/REPLACE_ME"

@@ -364,17 +364,19 @@ with:
 │   ├── scripts/
 │   │   ├── run-deploy.sh              # Action entry point (stage tfvars, overrides, run)
 │   │   └── setup-repo-protection.sh   # One-time gh-api repo hardening (admins)
-│   ├── CODEOWNERS                     # Review ownership (set your team)
 │   └── dependabot.yml
 ├── infra/                       # Bundled Terraform (Bastion + jumpbox + ...)
 │   ├── main.tf                  # Root: RG + Bastion (AVM) + network/monitoring/jumpbox modules
 │   ├── deploy-terraform.sh      # init/plan/apply/destroy orchestration
 │   └── modules/                 # network, jumpbox (VM via AVM), monitoring
+├── bastion-consumer-scripts/    # Hand to teams to reach the jumpbox via Bastion
+│   ├── bastion-proxy.sh         # SOCKS5 proxy tunnel (macOS/Linux/Git Bash)
+│   ├── bastion-proxy.ps1        # SOCKS5 proxy tunnel (Windows PowerShell)
+│   └── bastion-proxy.md         # Consumer-facing usage guide
 ├── examples/
 │   ├── caller-deploy.yml        # Copy into your repo's workflows
 │   ├── team.tfvars              # Copy + edit for your config (GitHub Actions)
 │   └── local.tfvars             # Copy to infra/terraform.tfvars for local use
-├── SECURITY.md                  # Vulnerability reporting policy
 └── README.md
 ```
 
@@ -584,22 +586,28 @@ The [`examples/local.tfvars`](examples/local.tfvars) template includes every req
 
 Use the bundled script to open a SOCKS5 proxy tunnel through Azure Bastion. It installs the Bastion CLI extension on first use, starts the jumpbox if auto-shutdown has deallocated it, and waits for the proxy to come up. Log in first with `az login`.
 
-Derive the names from Terraform outputs (run from the repo root):
+Derive the names from Terraform outputs and your current Azure context (run from
+the repo root):
 
 ```bash
-# Extract resource names from Terraform state
+# Resource names from Terraform state; subscription/tenant from your az login
 RG="<app_name>-<app_env>"   # e.g. my-app-tools
 BASTION_NAME="$(cd infra && terraform output -raw bastion_resource_id | sed 's|.*/||')"
 VM_NAME="$(cd infra && terraform output -raw jumpbox_vm_id            | sed 's|.*/||')"
+SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+TENANT_ID="$(az account show --query tenantId -o tsv)"
 ```
 
-**macOS / Linux / Windows (Git Bash)** — [`infra/scripts/bastion-proxy.sh`](infra/scripts/bastion-proxy.sh):
+**macOS / Linux / Windows (Git Bash)** — [`bastion-consumer-scripts/bastion-proxy.sh`](bastion-consumer-scripts/bastion-proxy.sh):
 
 ```bash
-./infra/scripts/bastion-proxy.sh \
+./bastion-consumer-scripts/bastion-proxy.sh \
   -g "$RG" \
   -b "$BASTION_NAME" \
-  -v "$VM_NAME"
+  -v "$VM_NAME" \
+  -s "$SUBSCRIPTION_ID" \
+  -t "$TENANT_ID" \
+  -p 8228
 ```
 
-Once the tunnel is ready the script prints the proxy address; point your browser or CLI at `socks5h://127.0.0.1:8228` to reach private endpoints. Traffic routed through the SOCKS5 proxy is resolved and forwarded by the jumpbox, giving access to private PaaS endpoints without a VPN. The default port is `8228`; override with `-p`.
+Once the tunnel is ready the script prints the proxy address; point your browser or CLI at `socks5h://127.0.0.1:8228` to reach private endpoints. Traffic routed through the SOCKS5 proxy is resolved and forwarded by the jumpbox, giving access to private PaaS endpoints without a VPN. Pass the starting port with `-p` (here `8228`); if it's already in use the script picks the next free one and prints it.
