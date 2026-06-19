@@ -11,6 +11,41 @@ teams do not copy any Terraform: they add the action as a step, pass a few input
 (or a `.tfvars` file), and the deployment lands in **their** subscription /
 namespace.
 
+## ⚠️ One Bastion per VNet
+
+Azure enforces two hard constraints that matter when multiple namespaces share a
+spoke VNet:
+
+**1. `AzureBastionSubnet` is a VNet-level singleton.**
+A VNet can have only one subnet named `AzureBastionSubnet`, and Azure Bastion
+requires exactly that name. This deployer always creates it. If another namespace
+already owns `AzureBastionSubnet` in the target VNet, the deploy will fail — there
+is no workaround short of using a separate spoke VNet.
+
+> **In the BC Gov ALZ pattern each license plate gets its own spoke VNet**, so this
+> is normally not an issue. It only arises if two license plates are deliberately
+> sharing a single spoke.
+
+**2. Jumpbox subnet names must be unique per VNet.**
+The `jumpbox_subnet_name` input defaults to `jumpbox-subnet`. If another namespace
+has already claimed that name in the same VNet, Terraform will attempt to modify the
+existing subnet and Azure will block it. Always override this to something
+namespace-specific:
+
+```yaml
+# In the caller workflow:
+- uses: bcgov/action-deployer-vm-bastion-alz@v1
+  with:
+    jumpbox_subnet_name: myapp-jumpbox-subnet   # unique per namespace
+    ...
+```
+
+or in your `tfvars_file`:
+
+```hcl
+jumpbox_subnet_name = "myapp-jumpbox-subnet"
+```
+
 ## How it works
 
 ```mermaid
@@ -160,41 +195,6 @@ platform team): a jumpbox subnet and `AzureBastionSubnet`. Both are always creat
 > is smaller than /26 (Azure Bastion requires at least a /26), if any subnet/VNet
 > value is not a valid CIDR, or if `bastion_subnet_name` is changed away from
 > `AzureBastionSubnet`.
-
-### One Bastion per VNet
-
-Azure enforces two hard constraints that matter when multiple namespaces share a
-spoke VNet:
-
-**1. `AzureBastionSubnet` is a VNet-level singleton.**
-A VNet can have only one subnet named `AzureBastionSubnet`, and Azure Bastion
-requires exactly that name. This deployer always creates it. If another namespace
-already owns `AzureBastionSubnet` in the target VNet, the deploy will fail — there
-is no workaround short of using a separate spoke VNet.
-
-> **In the BC Gov ALZ pattern each license plate gets its own spoke VNet**, so this
-> is normally not an issue. It only arises if two license plates are deliberately
-> sharing a single spoke.
-
-**2. Jumpbox subnet names must be unique per VNet.**
-The `jumpbox_subnet_name` input defaults to `jumpbox-subnet`. If another namespace
-has already claimed that name in the same VNet, Terraform will attempt to modify the
-existing subnet and Azure will block it. Always override this to something
-namespace-specific:
-
-```yaml
-# In the caller workflow:
-- uses: bcgov/action-deployer-vm-bastion-alz@v1
-  with:
-    jumpbox_subnet_name: myapp-jumpbox-subnet   # unique per namespace
-    ...
-```
-
-or in your `tfvars_file`:
-
-```hcl
-jumpbox_subnet_name = "myapp-jumpbox-subnet"
-```
 
 ## Inputs
 
