@@ -34,7 +34,7 @@ jobs:
           output-file: CHANGELOG.md
           skip-version-file: true
           release-count: 10
-          git-message: "chore(release): {version} [skip ci]"
+          git-message: "chore(release): {version}"
           git-user-name: "github-actions[bot]"
           git-user-email: "github-actions[bot]@users.noreply.github.com"
 
