@@ -18,35 +18,43 @@ jobs:
     name: Tag and release
     runs-on: ubuntu-24.04
     permissions:
-      contents: write # push tags + CHANGELOG.md commit + create release
+      contents: write # push tags + create release
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0 # full history required for changelog generation
 
-      - name: Bump version, update CHANGELOG and push tag
+      # Compute the next version + release notes from Conventional Commits.
+      # `main` is a protected branch (PRs + required checks) so CI cannot push a
+      # commit to it — run in compute-only mode: no commit, no CHANGELOG.md file,
+      # no branch push. The action still creates the version tag locally and sets
+      # its outputs; we push the tag (a refs/tags/* push, which protection allows)
+      # and publish the GitHub Release below. The Releases page is the changelog.
+      - name: Compute next version and release notes
         id: changelog
         uses: TriPSs/conventional-changelog-action@952b14bbc4be87e8458a6ac5926fc655608b1b19 # v6.3.1
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          preset: "conventionalcommits"
+          github-token: ${{ github.token }}
           tag-prefix: v
-          output-file: CHANGELOG.md
-          skip-version-file: true
+          output-file: "false"   # don't write/commit a CHANGELOG.md
+          skip-commit: "true"    # don't commit to protected main
+          git-push: "false"      # don't push to protected main; we push the tag below
           release-count: 10
-          git-message: "chore(release): {version}"
           git-user-name: "github-actions[bot]"
           git-user-email: "github-actions[bot]@users.noreply.github.com"
 
-      - name: Push floating major tag
+      - name: Push tags
         if: steps.changelog.outputs.skipped == 'false'
         env:
           NEW_TAG: ${{ steps.changelog.outputs.tag }}
         run: |
           set -euo pipefail
-          MAJOR_TAG="${NEW_TAG%%.*}"   # v1.2.3 → v1
+          MAJOR_TAG="${NEW_TAG%%.*}"       # v1.2.3 → v1
+          git push origin "$NEW_TAG"       # version tag created locally by the action
           git tag -f "$MAJOR_TAG"
-          git push origin -f "$MAJOR_TAG"
+          git push origin -f "$MAJOR_TAG"  # floating major
 
       - name: Build release notes
         if: steps.changelog.outputs.skipped == 'false'
