@@ -54,6 +54,21 @@ bastion_tunneling_enabled  = true
 bastion_copy_paste_enabled = true
 bastion_file_copy_enabled  = false
 bastion_scale_units        = 2
+# bastion_ip_connect_enabled     = false # connect by target IP (Standard/Premium)
+# bastion_shareable_link_enabled = false # shareable session links (Standard/Premium)
+
+# --- Start/stop schedules (tfvars-only; no GitHub Action input) --------------
+# Schedule timing is configurable here and ONLY here — these knobs are not
+# exposed as action inputs. The values below are the defaults; uncomment to
+# change. Automation times (VM start / Bastion recreate / Bastion delete) are
+# UTC; the VM auto-shutdown has its own Windows time-zone field.
+# vm_auto_shutdown_enabled  = true
+# vm_auto_shutdown_time     = "0100"     # 24h HHmm, in vm_auto_shutdown_timezone
+# vm_auto_shutdown_timezone = "UTC"      # Windows tz, e.g. "Pacific Standard Time"
+# vm_auto_start_time_utc    = "16:00:00" # VM auto-start time (UTC)
+# auto_start_week_days      = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+# bastion_create_time_utc   = "16:00:00" # Bastion recreate (UTC); needs enable_bastion_automation
+# bastion_delete_time_utc   = "01:00:00" # Bastion delete   (UTC); needs enable_bastion_automation
 
 # --- Log Analytics -----------------------------------------------------------
 # Monitoring is OPTIONAL. The only consumer of the workspace is the Bastion

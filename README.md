@@ -132,6 +132,14 @@ override inputs (-var)  >  tfvars_file  >  secret-backed TF_VAR_* defaults
 
 So an override input always wins over the same key in your tfvars file.
 
+> **Prefer a `tfvars_file` for anything beyond the basics.** The action inputs are
+> a deliberately small set of the most common knobs. The **full** set of tunables
+> lives in [`infra/variables.tf`](infra/variables.tf) and is reachable **only**
+> through `tfvars_file`. Some knobs — notably all **start/stop schedule** timing
+> (see [Start/stop schedules](#startstop-schedules)) — have **no action input at
+> all** and can only be set in tfvars. Rule of thumb: use action inputs for the
+> handful of common overrides; put everything else in your `tfvars_file`.
+
 ## Network configuration
 
 The deployer creates two subnets inside your **existing** spoke VNet (owned by the
@@ -313,6 +321,61 @@ provisioned via [Azure Verified Modules](https://aka.ms/avm) —
 modules `network`, `jumpbox`, and `monitoring` wrap the subnets/NSGs, the
 Automation runbooks, and Log Analytics. See
 [`infra/variables.tf`](infra/variables.tf) for the full set of tunable variables.
+
+## Start/stop schedules
+
+To save cost the jumpbox is **deallocated overnight** and **restarted on a
+schedule**, and (optionally) Azure Bastion is **deleted after hours and
+recreated** the next working day. All of this timing is configurable — but
+**only via `tfvars_file`**. There are no action inputs for schedules.
+
+| Schedule | What it does | Default | Knob(s) |
+|---|---|---|---|
+| VM auto-shutdown | Deallocates the jumpbox daily | 01:00 daily (UTC) | `vm_auto_shutdown_enabled`, `vm_auto_shutdown_time`, `vm_auto_shutdown_timezone` |
+| VM auto-start | Restarts the jumpbox on working days | 16:00 UTC, Mon–Fri | `vm_auto_start_time_utc`, `auto_start_week_days` |
+| Bastion recreate\* | Recreates Bastion on working days | 16:00 UTC, Mon–Fri | `bastion_create_time_utc`, `auto_start_week_days` |
+| Bastion delete\* | Deletes Bastion after hours | 01:00 UTC daily | `bastion_delete_time_utc` |
+
+\* Bastion delete/recreate only runs when `enable_bastion_automation = true`.
+
+- **VM auto-shutdown** uses Azure's DevTest schedule: `vm_auto_shutdown_time` is
+  24-hour `HHmm` (no colon) interpreted in `vm_auto_shutdown_timezone` — a
+  **Windows** time-zone ID such as `Pacific Standard Time`. Set
+  `vm_auto_shutdown_enabled = false` to keep the VM running.
+- **The automation schedules** (VM start, Bastion recreate/delete) are **UTC**;
+  give the time as `HH:MM:SS`. `auto_start_week_days` is shared by the VM-start
+  and Bastion-recreate schedules (full English weekday names).
+
+Example — start later in the day, run Mon–Sat, and shut the VM down at 6 PM local:
+
+```hcl
+vm_auto_start_time_utc    = "14:00:00"
+bastion_create_time_utc   = "14:00:00"
+bastion_delete_time_utc   = "02:00:00"
+auto_start_week_days      = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+vm_auto_shutdown_time     = "1800"                  # 6:00 PM…
+vm_auto_shutdown_timezone = "Pacific Standard Time" # …local time
+```
+
+## Bastion session options
+
+Azure Bastion's session features are tfvars-only knobs (no action input). They
+apply to **both** the live Bastion and the one the automation runbook recreates,
+so the two always stay in sync:
+
+| Knob | Effect | Default |
+|---|---|---|
+| `bastion_tunneling_enabled` | Native client tunneling (required for the SOCKS proxy) | `true` |
+| `bastion_copy_paste_enabled` | Clipboard copy/paste in sessions | `true` |
+| `bastion_file_copy_enabled` | File copy in sessions | `false` |
+| `bastion_ip_connect_enabled` | Connect to a target by IP | `false` |
+| `bastion_shareable_link_enabled` | Shareable session links | `false` |
+| `bastion_scale_units` | Bastion scale units (instances) | `2` |
+
+Tunneling, file copy, IP connect, and shareable links require the **Standard**
+(or Premium) SKU — the default `bastion_sku`. Leave `bastion_tunneling_enabled`
+on: the [bastion-proxy](bastion-consumer-scripts/bastion-proxy.md) workflow
+depends on it.
 
 ## Monitoring (optional Log Analytics)
 

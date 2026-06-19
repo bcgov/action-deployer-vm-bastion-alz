@@ -160,3 +160,84 @@ variable "bastion_public_ip_ddos_protection_mode" {
   type        = string
   default     = "VirtualNetworkInherited"
 }
+
+# -----------------------------------------------------------------------------
+# Start/stop schedule knobs
+# -----------------------------------------------------------------------------
+# Defaults preserve the original behaviour: the VM deallocates daily at 01:00 and
+# is restarted at 16:00 UTC on weekdays. When Bastion automation is enabled,
+# Bastion is deleted daily at 01:00 UTC and recreated at 16:00 UTC on weekdays.
+
+variable "vm_auto_shutdown_enabled" {
+  description = "Enable the daily auto-shutdown (deallocate) schedule on the jumpbox VM."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "vm_auto_shutdown_time" {
+  description = "Daily VM auto-shutdown time as 24h HHmm with no colon (DevTest schedule format), interpreted in vm_auto_shutdown_timezone. Example: '0100' = 1:00 AM."
+  type        = string
+  default     = "0100"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^([01][0-9]|2[0-3])[0-5][0-9]$", var.vm_auto_shutdown_time))
+    error_message = "vm_auto_shutdown_time must be 24h HHmm with no colon, e.g. '0100' or '1830'."
+  }
+}
+
+variable "vm_auto_shutdown_timezone" {
+  description = "Windows time zone ID for the VM auto-shutdown schedule, e.g. 'UTC' or 'Pacific Standard Time'."
+  type        = string
+  default     = "UTC"
+  nullable    = false
+}
+
+variable "vm_auto_start_time_utc" {
+  description = "Time (UTC, HH:MM:SS) the jumpbox VM is auto-started on the scheduled days. Example: '16:00:00'."
+  type        = string
+  default     = "16:00:00"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$", var.vm_auto_start_time_utc))
+    error_message = "vm_auto_start_time_utc must be UTC HH:MM:SS, e.g. '16:00:00'."
+  }
+}
+
+variable "auto_start_week_days" {
+  description = "Days of the week the VM auto-start and the Bastion auto-recreate schedules run."
+  type        = list(string)
+  default     = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+  nullable    = false
+
+  validation {
+    condition     = length(var.auto_start_week_days) > 0 && alltrue([for d in var.auto_start_week_days : contains(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], d)])
+    error_message = "auto_start_week_days must be a non-empty list of full English weekday names (e.g. \"Monday\")."
+  }
+}
+
+variable "bastion_create_time_utc" {
+  description = "Time (UTC, HH:MM:SS) the Bastion host is recreated on the scheduled days. Only used when enable_bastion_automation = true."
+  type        = string
+  default     = "16:00:00"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$", var.bastion_create_time_utc))
+    error_message = "bastion_create_time_utc must be UTC HH:MM:SS, e.g. '16:00:00'."
+  }
+}
+
+variable "bastion_delete_time_utc" {
+  description = "Time (UTC, HH:MM:SS) the Bastion host is deleted each day (after hours). Only used when enable_bastion_automation = true."
+  type        = string
+  default     = "01:00:00"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$", var.bastion_delete_time_utc))
+    error_message = "bastion_delete_time_utc must be UTC HH:MM:SS, e.g. '01:00:00'."
+  }
+}
