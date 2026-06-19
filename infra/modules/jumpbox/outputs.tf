@@ -28,13 +28,13 @@ output "principal_id" {
 }
 
 output "auto_shutdown_time" {
-  description = "Auto-shutdown time (PST)"
-  value       = "7:00 PM PST (daily)"
+  description = "Configured VM auto-shutdown schedule"
+  value       = var.vm_auto_shutdown_enabled ? "${var.vm_auto_shutdown_time} ${var.vm_auto_shutdown_timezone} (daily)" : "disabled"
 }
 
 output "auto_start_schedule" {
-  description = "Auto-start schedule"
-  value       = "8:00 AM PST (Monday-Friday only)"
+  description = "Configured VM auto-start schedule"
+  value       = "${var.vm_auto_start_time_utc} UTC (${join(", ", var.auto_start_week_days)})"
 }
 
 output "automation_account_id" {

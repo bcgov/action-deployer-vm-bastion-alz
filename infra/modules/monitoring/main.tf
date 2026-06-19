@@ -15,6 +15,7 @@ resource "azurerm_log_analytics_workspace" "main" {
   resource_group_name = var.resource_group_name
   sku                 = var.log_analytics_sku
   retention_in_days   = var.log_analytics_retention_days
+  daily_quota_gb      = var.log_analytics_daily_quota_gb
 
   tags = var.common_tags
   lifecycle {

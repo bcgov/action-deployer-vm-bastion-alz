@@ -19,7 +19,7 @@ module "vm" {
   name                = "${var.app_name}-jumpbox"
   resource_group_name = var.resource_group_name
   location            = var.location
-  zone                = null # non-zonal, matching the original VM
+  zone                = var.availability_zone # null = non-zonal (original behaviour)
   os_type             = "Linux"
   sku_size            = var.vm_size
   enable_telemetry    = false
@@ -30,12 +30,7 @@ module "vm" {
   # across BC Gov subscriptions that haven't registered the feature.
   encryption_at_host_enabled = false
 
-  source_image_reference = {
-    publisher = "Canonical"
-    offer     = "ubuntu-24_04-lts"
-    sku       = "server"
-    version   = "latest"
-  }
+  source_image_reference = var.vm_image
 
   os_disk = {
     caching              = "ReadWrite"
@@ -76,13 +71,19 @@ module "vm" {
     }
   } : {}
 
-  # Auto-shutdown at 01:00 UTC (6 PM Pacific with the repo's +7 offset).
+  # Daily VM auto-shutdown (deallocate). Time, timezone, on/off, and the optional
+  # pre-shutdown notification are tfvars knobs.
   shutdown_schedules = {
     daily = {
-      daily_recurrence_time = "0100"
-      timezone              = "UTC"
-      enabled               = true
-      notification_settings = { enabled = false }
+      daily_recurrence_time = var.vm_auto_shutdown_time
+      timezone              = var.vm_auto_shutdown_timezone
+      enabled               = var.vm_auto_shutdown_enabled
+      notification_settings = {
+        enabled         = var.vm_auto_shutdown_notification.enabled
+        email           = var.vm_auto_shutdown_notification.email
+        time_in_minutes = tostring(var.vm_auto_shutdown_notification.minutes_before)
+        webhook_url     = var.vm_auto_shutdown_notification.webhook_url
+      }
     }
   }
 
@@ -242,20 +243,27 @@ resource "azurerm_automation_runbook" "delete_bastion" {
 }
 
 locals {
-  automation_schedule_timezone             = "UTC"
-  automation_weekday_start_time_utc        = "16:00:00Z"
-  automation_daily_delete_bastion_time_utc = "01:00:00Z"
+  # Schedules first fire tomorrow; the recurrence then governs subsequent runs.
+  # Times come from tfvars knobs and are built as UTC (Z); week days are tunable.
+  automation_schedule_start_date = formatdate("YYYY-MM-DD", timeadd(timestamp(), "24h"))
+
+  # start_time is ignored after creation (its date drifts every apply), so the
+  # time-of-day is encoded in each schedule name: changing a time knob changes the
+  # name, forcing a replacement that applies the new time. HHMM, UTC.
+  schedule_vm_start_hhmm       = substr(replace(var.vm_auto_start_time_utc, ":", ""), 0, 4)
+  schedule_bastion_create_hhmm = substr(replace(var.bastion_create_time_utc, ":", ""), 0, 4)
+  schedule_bastion_delete_hhmm = substr(replace(var.bastion_delete_time_utc, ":", ""), 0, 4)
 }
 
 resource "azurerm_automation_schedule" "weekday_start" {
-  name                    = "Weekday-1600UTC-Start"
+  name                    = "Weekday-Start-${local.schedule_vm_start_hhmm}UTC"
   resource_group_name     = var.resource_group_name
   automation_account_name = azurerm_automation_account.jumpbox.name
   frequency               = "Week"
   interval                = 1
-  timezone                = local.automation_schedule_timezone
-  start_time              = "${formatdate("YYYY-MM-DD", timeadd(timestamp(), "24h"))}T${local.automation_weekday_start_time_utc}"
-  week_days               = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+  timezone                = "UTC"
+  start_time              = "${local.automation_schedule_start_date}T${var.vm_auto_start_time_utc}Z"
+  week_days               = var.auto_start_week_days
 
   lifecycle {
     ignore_changes = [start_time]
@@ -264,14 +272,14 @@ resource "azurerm_automation_schedule" "weekday_start" {
 
 resource "azurerm_automation_schedule" "weekday_create_bastion" {
   count                   = var.enable_bastion && var.enable_bastion_automation ? 1 : 0
-  name                    = "Weekday-1600UTC-Create-Bastion"
+  name                    = "Weekday-CreateBastion-${local.schedule_bastion_create_hhmm}UTC"
   resource_group_name     = var.resource_group_name
   automation_account_name = azurerm_automation_account.jumpbox.name
   frequency               = "Week"
   interval                = 1
-  timezone                = local.automation_schedule_timezone
-  start_time              = "${formatdate("YYYY-MM-DD", timeadd(timestamp(), "24h"))}T${local.automation_weekday_start_time_utc}"
-  week_days               = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+  timezone                = "UTC"
+  start_time              = "${local.automation_schedule_start_date}T${var.bastion_create_time_utc}Z"
+  week_days               = var.auto_start_week_days
 
   lifecycle {
     ignore_changes = [start_time]
@@ -280,13 +288,13 @@ resource "azurerm_automation_schedule" "weekday_create_bastion" {
 
 resource "azurerm_automation_schedule" "daily_delete_bastion" {
   count                   = var.enable_bastion && var.enable_bastion_automation ? 1 : 0
-  name                    = "Daily-0100UTC-Delete-Bastion"
+  name                    = "Daily-DeleteBastion-${local.schedule_bastion_delete_hhmm}UTC"
   resource_group_name     = var.resource_group_name
   automation_account_name = azurerm_automation_account.jumpbox.name
   frequency               = "Day"
   interval                = 1
-  timezone                = local.automation_schedule_timezone
-  start_time              = "${formatdate("YYYY-MM-DD", timeadd(timestamp(), "24h"))}T${local.automation_daily_delete_bastion_time_utc}"
+  timezone                = "UTC"
+  start_time              = "${local.automation_schedule_start_date}T${var.bastion_delete_time_utc}Z"
 
   lifecycle {
     ignore_changes = [start_time]
