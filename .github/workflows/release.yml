@@ -29,14 +29,13 @@ jobs:
         id: changelog
         uses: TriPSs/conventional-changelog-action@952b14bbc4be87e8458a6ac5926fc655608b1b19 # v6.3.1
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          tag-prefix: v
-          output-file: CHANGELOG.md
-          skip-version-file: true
-          release-count: 10
-          git-message: "chore(release): {version}"
-          git-user-name: "github-actions[bot]"
-          git-user-email: "github-actions[bot]@users.noreply.github.com"
+          preset: "conventionalcommits"
+          github-token: ${{ github.token }}
+          output-file: "CHANGELOG.md"
+          skip-version-file: "true"
+          skip-commit: "true"
+          skip-on-empty: "false"
+          git-push: "true"
 
       - name: Push floating major tag
         if: steps.changelog.outputs.skipped == 'false'
