@@ -49,34 +49,40 @@ your role assignment.
 
 ## How to run it
 
-You'll need three names for your environment — the **resource group**, the
-**Bastion host**, and the **jumpbox VM**. Your environment owner can give you
-these, or you can read them from your Terraform outputs.
+You'll need your environment's **resource group**, **Bastion host**, and
+**jumpbox VM** names, plus your **subscription ID**, **tenant ID**, and a local
+**port** for the proxy. Your environment owner can give you the names, or you can
+read them from your Terraform outputs.
 
 ### Windows (PowerShell)
 
 ```powershell
-.\scripts\bastion-proxy.ps1 -ResourceGroup <resource-group> -BastionName <bastion-name> -VmName <vm-name>
+.\scripts\bastion-proxy.ps1 -ResourceGroup <resource-group> -BastionName <bastion-name> -VmName <vm-name> -SubscriptionId <subscription-id> -TenantId <tenant-id> -Port <port>
 ```
 
 ### macOS / Linux / Git Bash
 
 ```bash
-./scripts/bastion-proxy.sh -g <resource-group> -b <bastion-name> -v <vm-name>
+./scripts/bastion-proxy.sh -g <resource-group> -b <bastion-name> -v <vm-name> -s <subscription-id> -t <tenant-id> -p <port>
 ```
 
 That's it. The first run takes a minute while it sets things up and pops open a
 browser for sign-in. After that, it's fast.
 
-### A real example
+### A worked example
 
-For this repo's deployment:
+Using the deployer's default naming — `<app_name>-<app_env>` for the resource
+group and `<app_name>-bastion` / `<app_name>-jumpbox` for the hosts — here with
+`app_name = my-app` and `app_env = tools`. Swap in your own values:
 
 ```bash
 ./scripts/bastion-proxy.sh \
-  -g eo-dmi-alz-bastion-jumpbox-tools \
-  -b eo-dmi-alz-bastion-jumpbox-bastion \
-  -v eo-dmi-alz-bastion-jumpbox-jumpbox
+  -g my-app-tools \
+  -b my-app-bastion \
+  -v my-app-jumpbox \
+  -s <subscription-id> \
+  -t <tenant-id> \
+  -p 8228
 ```
 
 ### Options
@@ -86,8 +92,9 @@ For this repo's deployment:
 | `-g` | `-ResourceGroup` / `--resource-group` | Resource group holding the Bastion and VM | **required** |
 | `-b` | `-BastionName` / `--bastion-name` | Name of the Bastion host | **required** |
 | `-v` | `-VmName` / `--vm-name` | Name of the jumpbox VM | **required** |
-| `-s` | `-SubscriptionId` / `--subscription` | Azure subscription to use | the repo default |
-| `-p` | `-Port` / `--port` | Starting local port for the proxy | `8228` |
+| `-s` | `-SubscriptionId` / `--subscription` | Azure subscription ID to use | **required** |
+| `-t` | `-TenantId` / `--tenant` | Entra (Azure AD) tenant ID to sign in to | **required** |
+| `-p` | `-Port` / `--port` | Starting local port for the proxy | **required** |
 
 ---
 
@@ -104,8 +111,8 @@ so you're never left guessing:
    Just answer `y`.
 4. **Checks Bastion** — makes sure the Bastion host is healthy and ready. If
    it's mid-provisioning, the script waits for it.
-5. **Picks a port** — uses `8228`, or the next free one if that's taken, and
-   tells you which.
+5. **Picks a port** — uses the port you pass with `-p` (`8228` in the examples
+   above), or the next free one if that's taken, and tells you which.
 6. **Opens the tunnel** — and prints your connection details.
 7. **Launches a browser** — if you have Edge or Chrome, it opens a fresh window
    already pointed at the proxy, ready to browse private sites.
