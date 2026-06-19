@@ -18,36 +18,40 @@ jobs:
     name: Tag and release
     runs-on: ubuntu-24.04
     permissions:
-      contents: write   # push tags + create release
+      contents: write   # push tags + CHANGELOG.md commit + create release
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0   # full history required for tag discovery
+          fetch-depth: 0   # full history required for changelog generation
 
-      - name: Bump version and push tag
-        id: tag
-        uses: mathieudutour/github-tag-action@a22cf08638b34d5badda920f9daf6e72c477b07b # v6.2
+      - name: Bump version, update CHANGELOG and push tag
+        id: changelog
+        uses: TriPSs/conventional-changelog-action@952b14bbc4be87e8458a6ac5926fc655608b1b19 # v6.3.1
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          default_bump: patch
-          tag_prefix: v
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          tag-prefix: v
+          output-file: CHANGELOG.md
+          release-count: 10
+          git-message: "chore(release): {version} [skip ci]"
+          git-user-name: "github-actions[bot]"
+          git-user-email: "github-actions[bot]@users.noreply.github.com"
 
       - name: Push floating major tag
+        if: steps.changelog.outputs.skipped == 'false'
         env:
-          NEW_TAG: ${{ steps.tag.outputs.new_tag }}
+          NEW_TAG: ${{ steps.changelog.outputs.tag }}
         run: |
           set -euo pipefail
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           MAJOR_TAG="${NEW_TAG%%.*}"   # v1.2.3 → v1
           git tag -f "$MAJOR_TAG"
           git push origin -f "$MAJOR_TAG"
 
       - name: Build release notes
+        if: steps.changelog.outputs.skipped == 'false'
         env:
-          NEW_TAG:    ${{ steps.tag.outputs.new_tag }}
-          CHANGELOG:  ${{ steps.tag.outputs.changelog }}
+          NEW_TAG:    ${{ steps.changelog.outputs.tag }}
+          CHANGELOG:  ${{ steps.changelog.outputs.clean_changelog }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -79,9 +83,10 @@ jobs:
           } > release_notes.md
 
       - name: Create GitHub Release
+        if: steps.changelog.outputs.skipped == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-          NEW_TAG:  ${{ steps.tag.outputs.new_tag }}
+          NEW_TAG:  ${{ steps.changelog.outputs.tag }}
         run: |
           set -euo pipefail
           gh release create "$NEW_TAG" \
