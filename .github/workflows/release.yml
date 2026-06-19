@@ -18,12 +18,12 @@ jobs:
     name: Tag and release
     runs-on: ubuntu-24.04
     permissions:
-      contents: write   # push tags + CHANGELOG.md commit + create release
+      contents: write # push tags + CHANGELOG.md commit + create release
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0   # full history required for changelog generation
+          fetch-depth: 0 # full history required for changelog generation
 
       - name: Bump version, update CHANGELOG and push tag
         id: changelog
@@ -32,6 +32,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tag-prefix: v
           output-file: CHANGELOG.md
+          skip-version-file: true
           release-count: 10
           git-message: "chore(release): {version} [skip ci]"
           git-user-name: "github-actions[bot]"
@@ -50,8 +51,8 @@ jobs:
       - name: Build release notes
         if: steps.changelog.outputs.skipped == 'false'
         env:
-          NEW_TAG:    ${{ steps.changelog.outputs.tag }}
-          CHANGELOG:  ${{ steps.changelog.outputs.clean_changelog }}
+          NEW_TAG: ${{ steps.changelog.outputs.tag }}
+          CHANGELOG: ${{ steps.changelog.outputs.clean_changelog }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -86,7 +87,7 @@ jobs:
         if: steps.changelog.outputs.skipped == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-          NEW_TAG:  ${{ steps.changelog.outputs.tag }}
+          NEW_TAG: ${{ steps.changelog.outputs.tag }}
         run: |
           set -euo pipefail
           gh release create "$NEW_TAG" \
