@@ -40,6 +40,7 @@ module "monitoring" {
   enable_monitoring                   = var.enable_monitoring
   log_analytics_retention_days        = var.log_analytics_retention_days
   log_analytics_sku                   = var.log_analytics_sku
+  log_analytics_daily_quota_gb        = var.log_analytics_daily_quota_gb
   existing_log_analytics_workspace_id = var.existing_log_analytics_workspace_id
   resource_group_name                 = azurerm_resource_group.main.name
 
@@ -54,7 +55,7 @@ module "bastion" {
   location               = var.location
   parent_id              = azurerm_resource_group.main.id
   sku                    = var.bastion_sku
-  zones                  = [] # match the original non-zonal Bastion; safe in non-AZ regions
+  zones                  = var.availability_zone == null ? [] : [var.availability_zone] # [] = non-zonal (original)
   tunneling_enabled      = var.bastion_tunneling_enabled
   copy_paste_enabled     = var.bastion_copy_paste_enabled
   file_copy_enabled      = var.bastion_file_copy_enabled
@@ -94,6 +95,8 @@ module "jumpbox" {
   vm_size                      = var.vm_size
   os_disk_type                 = var.os_disk_type
   os_disk_size_gb              = var.os_disk_size_gb
+  vm_image                     = var.vm_image
+  availability_zone            = var.availability_zone
   subnet_id                    = module.network.jumpbox_subnet_id
   enable_entra_login           = var.enable_entra_login
   vm_admin_login_principal_ids = var.vm_admin_login_principal_ids
@@ -111,13 +114,14 @@ module "jumpbox" {
   bastion_scale_units            = var.bastion_scale_units
 
   # Start/stop schedule knobs (tfvars-only)
-  vm_auto_shutdown_enabled  = var.vm_auto_shutdown_enabled
-  vm_auto_shutdown_time     = var.vm_auto_shutdown_time
-  vm_auto_shutdown_timezone = var.vm_auto_shutdown_timezone
-  vm_auto_start_time_utc    = var.vm_auto_start_time_utc
-  auto_start_week_days      = var.auto_start_week_days
-  bastion_create_time_utc   = var.bastion_create_time_utc
-  bastion_delete_time_utc   = var.bastion_delete_time_utc
+  vm_auto_shutdown_enabled      = var.vm_auto_shutdown_enabled
+  vm_auto_shutdown_time         = var.vm_auto_shutdown_time
+  vm_auto_shutdown_timezone     = var.vm_auto_shutdown_timezone
+  vm_auto_shutdown_notification = var.vm_auto_shutdown_notification
+  vm_auto_start_time_utc        = var.vm_auto_start_time_utc
+  auto_start_week_days          = var.auto_start_week_days
+  bastion_create_time_utc       = var.bastion_create_time_utc
+  bastion_delete_time_utc       = var.bastion_delete_time_utc
 
   depends_on = [module.network]
 }

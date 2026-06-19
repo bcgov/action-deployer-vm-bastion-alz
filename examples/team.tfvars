@@ -41,6 +41,16 @@ jumpbox_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.128/28
 vm_size         = "Standard_B2als_v2"
 os_disk_type    = "StandardSSD_LRS"
 os_disk_size_gb = 64
+# Pin the OS image for reproducible builds, or move to a newer LTS. Defaults to
+# the latest Ubuntu 24.04 LTS server image. (Uncomment to override.)
+# vm_image = {
+#   publisher = "Canonical"
+#   offer     = "ubuntu-24_04-lts"
+#   sku       = "server"
+#   version   = "latest" # or a pinned version, e.g. "24.04.202405300"
+# }
+# Pin the VM + Bastion to an availability zone ("1"/"2"/"3"); null = non-zonal.
+# availability_zone = "1"
 
 # --- Toggles -----------------------------------------------------------------
 enable_jumpbox            = true
@@ -65,6 +75,11 @@ bastion_scale_units        = 2
 # vm_auto_shutdown_enabled  = true
 # vm_auto_shutdown_time     = "0100"     # 24h HHmm, in vm_auto_shutdown_timezone
 # vm_auto_shutdown_timezone = "UTC"      # Windows tz, e.g. "Pacific Standard Time"
+# vm_auto_shutdown_notification = {        # heads-up before the VM deallocates
+#   enabled        = true
+#   email          = "team@example.gov.bc.ca" # and/or webhook_url
+#   minutes_before = 30                        # 15-120
+# }
 # vm_auto_start_time_utc    = "16:00:00" # VM auto-start time (UTC)
 # auto_start_week_days      = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 # bastion_create_time_utc   = "16:00:00" # Bastion recreate (UTC); needs enable_bastion_automation
@@ -79,6 +94,7 @@ bastion_scale_units        = 2
 enable_monitoring            = true
 log_analytics_retention_days = 30
 log_analytics_sku            = "PerGB2018"
+# log_analytics_daily_quota_gb = -1 # -1 = no cap; set a positive GB value to cap ingestion
 
 # Bring-your-own Log Analytics Workspace (BYO LAW). When set, no workspace is
 # created and Bastion audit logs attach to this existing one. Must be the FULL

@@ -19,7 +19,7 @@ module "vm" {
   name                = "${var.app_name}-jumpbox"
   resource_group_name = var.resource_group_name
   location            = var.location
-  zone                = null # non-zonal, matching the original VM
+  zone                = var.availability_zone # null = non-zonal (original behaviour)
   os_type             = "Linux"
   sku_size            = var.vm_size
   enable_telemetry    = false
@@ -30,12 +30,7 @@ module "vm" {
   # across BC Gov subscriptions that haven't registered the feature.
   encryption_at_host_enabled = false
 
-  source_image_reference = {
-    publisher = "Canonical"
-    offer     = "ubuntu-24_04-lts"
-    sku       = "server"
-    version   = "latest"
-  }
+  source_image_reference = var.vm_image
 
   os_disk = {
     caching              = "ReadWrite"
@@ -76,13 +71,19 @@ module "vm" {
     }
   } : {}
 
-  # Daily VM auto-shutdown (deallocate). Time, timezone, and on/off are tfvars knobs.
+  # Daily VM auto-shutdown (deallocate). Time, timezone, on/off, and the optional
+  # pre-shutdown notification are tfvars knobs.
   shutdown_schedules = {
     daily = {
       daily_recurrence_time = var.vm_auto_shutdown_time
       timezone              = var.vm_auto_shutdown_timezone
       enabled               = var.vm_auto_shutdown_enabled
-      notification_settings = { enabled = false }
+      notification_settings = {
+        enabled         = var.vm_auto_shutdown_notification.enabled
+        email           = var.vm_auto_shutdown_notification.email
+        time_in_minutes = tostring(var.vm_auto_shutdown_notification.minutes_before)
+        webhook_url     = var.vm_auto_shutdown_notification.webhook_url
+      }
     }
   }
 

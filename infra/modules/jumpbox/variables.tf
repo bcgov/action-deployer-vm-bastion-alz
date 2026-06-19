@@ -52,6 +52,34 @@ variable "os_disk_size_gb" {
   nullable    = false
 }
 
+variable "vm_image" {
+  description = "Source image for the jumpbox VM. Defaults to the latest Ubuntu 24.04 LTS server image. Pin 'version' to a specific image version (instead of 'latest') for reproducible builds."
+  type = object({
+    publisher = string
+    offer     = string
+    sku       = string
+    version   = string
+  })
+  default = {
+    publisher = "Canonical"
+    offer     = "ubuntu-24_04-lts"
+    sku       = "server"
+    version   = "latest"
+  }
+  nullable = false
+}
+
+variable "availability_zone" {
+  description = "Availability zone to pin the jumpbox VM to (\"1\", \"2\", or \"3\"). null (the default) keeps the VM non-zonal, matching the original deployment. Changing this on an existing VM forces replacement."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.availability_zone == null || contains(["1", "2", "3"], var.availability_zone)
+    error_message = "availability_zone must be \"1\", \"2\", \"3\", or null."
+  }
+}
+
 variable "enable_entra_login" {
   description = "Enable Microsoft Entra ID (AAD) SSH login on the Linux jumpbox VM via the AADSSHLoginForLinux VM extension"
   type        = bool
@@ -192,6 +220,28 @@ variable "vm_auto_shutdown_timezone" {
   type        = string
   default     = "UTC"
   nullable    = false
+}
+
+variable "vm_auto_shutdown_notification" {
+  description = "Pre-shutdown notification for the VM auto-shutdown schedule. When enabled, a heads-up is sent before the jumpbox deallocates; provide an email (semicolon-separated for multiple) and/or a webhook_url. minutes_before must be 15-120."
+  type = object({
+    enabled        = optional(bool, false)
+    email          = optional(string, null)
+    minutes_before = optional(number, 30)
+    webhook_url    = optional(string, null)
+  })
+  default  = {}
+  nullable = false
+
+  validation {
+    condition     = var.vm_auto_shutdown_notification.minutes_before >= 15 && var.vm_auto_shutdown_notification.minutes_before <= 120
+    error_message = "vm_auto_shutdown_notification.minutes_before must be between 15 and 120."
+  }
+
+  validation {
+    condition     = var.vm_auto_shutdown_notification.enabled == false || var.vm_auto_shutdown_notification.email != null || var.vm_auto_shutdown_notification.webhook_url != null
+    error_message = "When vm_auto_shutdown_notification.enabled = true, set an email and/or a webhook_url."
+  }
 }
 
 variable "vm_auto_start_time_utc" {

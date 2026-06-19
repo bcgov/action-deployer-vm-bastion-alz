@@ -27,6 +27,13 @@ variable "log_analytics_sku" {
   default     = "PerGB2018"
 }
 
+variable "log_analytics_daily_quota_gb" {
+  description = "Daily ingestion cap in GB for the created Log Analytics Workspace. -1 (the default) means no cap. Only applies when a workspace is created (not for BYO)."
+  type        = number
+  default     = -1
+  nullable    = false
+}
+
 variable "enable_monitoring" {
   description = "Create/attach a Log Analytics Workspace. When false, no workspace is created and the resolved workspace ID is empty (Bastion diagnostics are skipped)."
   type        = bool

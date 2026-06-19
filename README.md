@@ -322,6 +322,28 @@ modules `network`, `jumpbox`, and `monitoring` wrap the subnets/NSGs, the
 Automation runbooks, and Log Analytics. See
 [`infra/variables.tf`](infra/variables.tf) for the full set of tunable variables.
 
+## VM image and placement
+
+Two more tfvars-only knobs control the jumpbox image and its zone placement:
+
+| Knob | Effect | Default |
+|---|---|---|
+| `vm_image` | Source image (`publisher`/`offer`/`sku`/`version`). Pin `version` for reproducible builds instead of `latest`. | latest Ubuntu 24.04 LTS server |
+| `availability_zone` | Pin the VM **and** Bastion to a zone (`"1"`/`"2"`/`"3"`) | `null` (non-zonal) |
+
+```hcl
+vm_image = {
+  publisher = "Canonical"
+  offer     = "ubuntu-24_04-lts"
+  sku       = "server"
+  version   = "24.04.202405300" # pin instead of "latest"
+}
+availability_zone = "1"
+```
+
+> **Changing either forces a replacement** — a new image version recreates the VM,
+> and a zone change recreates the VM (and the Bastion). Plan a maintenance window.
+
 ## Start/stop schedules
 
 To save cost the jumpbox is **deallocated overnight** and **restarted on a
@@ -331,7 +353,7 @@ recreated** the next working day. All of this timing is configurable — but
 
 | Schedule | What it does | Default | Knob(s) |
 |---|---|---|---|
-| VM auto-shutdown | Deallocates the jumpbox daily | 01:00 daily (UTC) | `vm_auto_shutdown_enabled`, `vm_auto_shutdown_time`, `vm_auto_shutdown_timezone` |
+| VM auto-shutdown | Deallocates the jumpbox daily | 01:00 daily (UTC) | `vm_auto_shutdown_enabled`, `vm_auto_shutdown_time`, `vm_auto_shutdown_timezone`, `vm_auto_shutdown_notification` |
 | VM auto-start | Restarts the jumpbox on working days | 16:00 UTC, Mon–Fri | `vm_auto_start_time_utc`, `auto_start_week_days` |
 | Bastion recreate\* | Recreates Bastion on working days | 16:00 UTC, Mon–Fri | `bastion_create_time_utc`, `auto_start_week_days` |
 | Bastion delete\* | Deletes Bastion after hours | 01:00 UTC daily | `bastion_delete_time_utc` |
@@ -345,6 +367,10 @@ recreated** the next working day. All of this timing is configurable — but
 - **The automation schedules** (VM start, Bastion recreate/delete) are **UTC**;
   give the time as `HH:MM:SS`. `auto_start_week_days` is shared by the VM-start
   and Bastion-recreate schedules (full English weekday names).
+- **Pre-shutdown notification** (`vm_auto_shutdown_notification`) is off by
+  default. Set `enabled = true` with an `email` (semicolon-separated for multiple)
+  and/or a `webhook_url`, plus `minutes_before` (15–120), for a heads-up before
+  the VM deallocates.
 
 Example — start later in the day, run Mon–Sat, and shut the VM down at 6 PM local:
 
@@ -390,6 +416,11 @@ or the jumpbox to function. There are three modes:
 | **Create (default)** | nothing | A workspace `<app_name>-law` is created and receives Bastion audit logs. |
 | **Bring your own** | `existing_log_analytics_workspace_id` | No workspace is created; audit logs go to the workspace you pass. |
 | **Off** | `enable_monitoring = false` | No workspace and no Bastion diagnostic setting are created. |
+
+When a workspace is **created** (the default), three tfvars tune it:
+`log_analytics_retention_days` (default `30`), `log_analytics_sku` (default
+`PerGB2018`), and `log_analytics_daily_quota_gb` — a daily ingestion cap in GB,
+default `-1` (no cap). These don't apply to a BYO workspace.
 
 BYO example (resource ID, **not** just the workspace GUID):
 
