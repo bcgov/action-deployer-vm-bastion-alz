@@ -56,12 +56,12 @@ output "jumpbox_entra_login_enabled" {
 # Bastion Outputs
 output "bastion_resource_id" {
   description = "Resource ID of Azure Bastion"
-  value       = var.enable_bastion ? module.bastion[0].bastion_resource_id : null
+  value       = var.enable_bastion ? module.bastion[0].resource_id : null
 }
 
 output "bastion_fqdn" {
   description = "FQDN of the Bastion service"
-  value       = var.enable_bastion ? module.bastion[0].bastion_fqdn : null
+  value       = var.enable_bastion ? module.bastion[0].dns_name : null
 }
 
 

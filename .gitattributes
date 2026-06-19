@@ -2,9 +2,6 @@
 # scripts, and CI behave identically across macOS, Linux runners, and Windows.
 * text=auto eol=lf
 
-# Windows-native PowerShell scripts keep CRLF.
-*.ps1 text eol=crlf
-
 # Binary artifacts: never normalize or attempt text diffs.
 *.db  binary
 *.png binary

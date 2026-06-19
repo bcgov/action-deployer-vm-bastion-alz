@@ -27,21 +27,6 @@ resource "azurerm_network_security_group" "jumpbox" {
     destination_port_range     = "22"
   }
 
-  # Allow RDP from Bastion subnet (for GUI access via xRDP)
-  security_rule {
-    name                       = "AllowRDPFromBastion"
-    priority                   = 101
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_address_prefix      = local.bastion_subnet_cidr
-    destination_address_prefix = local.jumpbox_subnet_cidr
-    source_port_range          = "*"
-    destination_port_range     = "3389"
-  }
-
-
-
   # Allow outbound HTTPS to internet (for package updates, Azure CLI, etc.)
   security_rule {
     name                       = "AllowOutboundHTTPS"
@@ -183,7 +168,6 @@ resource "azurerm_network_security_group" "bastion" {
     destination_port_range     = "22"
   }
 
-  # Allow RDP outbound to VNet (for connecting to Windows VMs)
   security_rule {
     name                       = "AllowRdpOutbound"
     priority                   = 110
@@ -258,4 +242,3 @@ resource "azapi_resource" "bastion_subnet" {
   response_export_values = ["*"]
   depends_on             = [azapi_resource.jumpbox_subnet]
 }
-

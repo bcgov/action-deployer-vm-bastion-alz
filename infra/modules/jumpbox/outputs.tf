@@ -4,27 +4,27 @@
 
 output "vm_id" {
   description = "ID of the jumpbox virtual machine"
-  value       = azurerm_linux_virtual_machine.jumpbox.id
+  value       = module.vm.resource_id
 }
 
 output "vm_name" {
   description = "Name of the jumpbox virtual machine"
-  value       = azurerm_linux_virtual_machine.jumpbox.name
+  value       = module.vm.name
 }
 
 output "private_ip_address" {
   description = "Private IP address of the jumpbox VM"
-  value       = azurerm_network_interface.jumpbox.private_ip_address
+  value       = module.vm.virtual_machine_azurerm.private_ip_address
 }
 
 output "admin_username" {
   description = "Local admin username required by the VM resource. Interactive access uses Entra ID SSH login."
-  value       = random_string.admin_username.result
+  value       = module.vm.admin_username
 }
 
 output "principal_id" {
   description = "Principal ID of the VM's managed identity"
-  value       = azurerm_linux_virtual_machine.jumpbox.identity[0].principal_id
+  value       = module.vm.system_assigned_mi_principal_id
 }
 
 output "auto_shutdown_time" {

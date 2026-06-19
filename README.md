@@ -306,9 +306,13 @@ Set `terraform_command` to choose the operation:
 | Log Analytics workspace | **Optional** — created by default for the Bastion audit trail; BYO or disable (see below) |
 | Update Manager assessment | Patch compliance visibility |
 
-See [`infra/`](infra/) for the modules (`network`, `bastion`, `jumpbox`,
-`monitoring`) and [`infra/variables.tf`](infra/variables.tf) for the full set of
-tunable variables.
+See [`infra/`](infra/) for the layout. The Bastion host and the jumpbox VM are
+provisioned via [Azure Verified Modules](https://aka.ms/avm) —
+`avm-res-network-bastionhost` (called from the root) and
+`avm-res-compute-virtualmachine` (called inside the `jumpbox` module). The local
+modules `network`, `jumpbox`, and `monitoring` wrap the subnets/NSGs, the
+Automation runbooks, and Log Analytics. See
+[`infra/variables.tf`](infra/variables.tf) for the full set of tunable variables.
 
 ## Monitoring (optional Log Analytics)
 
@@ -363,8 +367,9 @@ with:
 │   ├── CODEOWNERS                     # Review ownership (set your team)
 │   └── dependabot.yml
 ├── infra/                       # Bundled Terraform (Bastion + jumpbox + ...)
+│   ├── main.tf                  # Root: RG + Bastion (AVM) + network/monitoring/jumpbox modules
 │   ├── deploy-terraform.sh      # init/plan/apply/destroy orchestration
-│   └── modules/                 # network, bastion, jumpbox, monitoring
+│   └── modules/                 # network, jumpbox (VM via AVM), monitoring
 ├── examples/
 │   ├── caller-deploy.yml        # Copy into your repo's workflows
 │   ├── team.tfvars              # Copy + edit for your config (GitHub Actions)
@@ -577,7 +582,7 @@ The [`examples/local.tfvars`](examples/local.tfvars) template includes every req
 
 **Connect to the jumpbox after deployment:**
 
-Use the bundled scripts to open a SOCKS5 proxy tunnel through Azure Bastion. They handle Azure CLI login, extension installation, VM start-up, and Bastion health checks automatically.
+Use the bundled script to open a SOCKS5 proxy tunnel through Azure Bastion. It installs the Bastion CLI extension on first use, starts the jumpbox if auto-shutdown has deallocated it, and waits for the proxy to come up. Log in first with `az login`.
 
 Derive the names from Terraform outputs (run from the repo root):
 
@@ -597,13 +602,4 @@ VM_NAME="$(cd infra && terraform output -raw jumpbox_vm_id            | sed 's|.
   -v "$VM_NAME"
 ```
 
-**Windows (PowerShell)** — [`infra/scripts/bastion-proxy.ps1`](infra/scripts/bastion-proxy.ps1):
-
-```powershell
-.\infra\scripts\bastion-proxy.ps1 `
-  -ResourceGroup $RG `
-  -BastionName   $BASTION_NAME `
-  -VmName        $VM_NAME
-```
-
-Both scripts open Edge or Chrome pre-configured with the proxy once the tunnel is ready. Traffic routed through the SOCKS5 proxy is resolved and forwarded by the jumpbox, giving access to private PaaS endpoints without a VPN. The default port is `8228`; override with `-p`/`-Port`.
+Once the tunnel is ready the script prints the proxy address; point your browser or CLI at `socks5h://127.0.0.1:8228` to reach private endpoints. Traffic routed through the SOCKS5 proxy is resolved and forwarded by the jumpbox, giving access to private PaaS endpoints without a VPN. The default port is `8228`; override with `-p`.
