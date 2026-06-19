@@ -42,3 +42,20 @@ terraform.rc
 # Optional: ignore plan files saved before destroying Terraform configuration
 # Uncomment the line below if you want to ignore planout files.
 # planout
+
+# -----------------------------------------------------------------------------
+# Repo-specific additions
+# -----------------------------------------------------------------------------
+# Keep the example tfvars tracked despite the *.tfvars rule above.
+!examples/*.tfvars
+
+# Saved Terraform plan outputs.
+*.tfplan
+tfplan
+
+# Local agent memory database (not part of the action).
+.copilot-memory/
+
+# OS / editor noise.
+.DS_Store
+Thumbs.db

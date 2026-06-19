@@ -1,0 +1,71 @@
+name: Validate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+# Deny-all baseline; the job steps up only what it needs.
+permissions: {}
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  terraform:
+    name: Terraform fmt / validate / tflint
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init (no backend)
+        working-directory: infra
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform validate
+        working-directory: infra
+        run: terraform validate
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@b480b8fcdaa6f2c577f8e4fa799e89e756bb7c93
+        with:
+          tflint_version: latest
+
+      - name: TFLint
+        # Advisory for now so a lint nit never blocks a release. Drop
+        # continue-on-error to make lint blocking once the team is comfortable.
+        continue-on-error: true
+        working-directory: infra
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TFLINT_CONFIG_FILE: ${{ github.workspace }}/infra/.tflint.hcl
+        run: |
+          set -euo pipefail
+          tflint --init
+          tflint --recursive
+
+  # Single aggregator — make only this job a required status check in branch
+  # protection so renaming jobs above never requires editing the ruleset.
+  results:
+    name: Validate results
+    if: always()
+    needs: [terraform]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check validate result
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

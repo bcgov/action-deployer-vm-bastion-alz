@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+# Queue releases; never cancel in-progress to keep tags consistent.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# Deny-all baseline — the release job steps up only what it needs.
+permissions: {}
+
+jobs:
+  release:
+    name: Tag and release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # push tags + CHANGELOG.md commit + create release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # full history required for changelog generation
+
+      - name: Bump version, update CHANGELOG and push tag
+        id: changelog
+        uses: TriPSs/conventional-changelog-action@952b14bbc4be87e8458a6ac5926fc655608b1b19 # v6.3.1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          tag-prefix: v
+          output-file: CHANGELOG.md
+          release-count: 10
+          git-message: "chore(release): {version} [skip ci]"
+          git-user-name: "github-actions[bot]"
+          git-user-email: "github-actions[bot]@users.noreply.github.com"
+
+      - name: Push floating major tag
+        if: steps.changelog.outputs.skipped == 'false'
+        env:
+          NEW_TAG: ${{ steps.changelog.outputs.tag }}
+        run: |
+          set -euo pipefail
+          MAJOR_TAG="${NEW_TAG%%.*}"   # v1.2.3 → v1
+          git tag -f "$MAJOR_TAG"
+          git push origin -f "$MAJOR_TAG"
+
+      - name: Build release notes
+        if: steps.changelog.outputs.skipped == 'false'
+        env:
+          NEW_TAG:    ${{ steps.changelog.outputs.tag }}
+          CHANGELOG:  ${{ steps.changelog.outputs.clean_changelog }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          MAJOR_TAG="${NEW_TAG%%.*}"   # v1.2.3 → v1
+
+          {
+            printf '%s\n\n' "$CHANGELOG"
+            printf -- '---\n\n'
+            printf '### Using this action\n\n'
+
+            printf 'Pin to the **exact commit** (most secure):\n'
+            printf '```yaml\n'
+            printf 'uses: bcgov/action-deployer-vm-bastion-alz@%s\n' "$COMMIT_SHA"
+            printf '```\n\n'
+
+            printf 'Pin to this **patch release**:\n'
+            printf '```yaml\n'
+            printf 'uses: bcgov/action-deployer-vm-bastion-alz@%s\n' "$NEW_TAG"
+            printf '```\n\n'
+
+            printf 'Pin to the **major version** (receives non-breaking updates automatically):\n'
+            printf '```yaml\n'
+            printf 'uses: bcgov/action-deployer-vm-bastion-alz@%s\n' "$MAJOR_TAG"
+            printf '```\n\n'
+
+            printf '> **Full SHA:** `%s`\n' "$COMMIT_SHA"
+            printf '> **Short SHA:** `%s`\n' "$SHORT_SHA"
+          } > release_notes.md
+
+      - name: Create GitHub Release
+        if: steps.changelog.outputs.skipped == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_TAG:  ${{ steps.changelog.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$NEW_TAG" \
+            --title "$NEW_TAG" \
+            --notes-file release_notes.md \
+            --latest
+
+  # Single aggregator — make only this job a required status check in branch
+  # protection so renaming upstream jobs never requires touching the ruleset.
+  results:
+    if: always()
+    needs: [release]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check release result
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
