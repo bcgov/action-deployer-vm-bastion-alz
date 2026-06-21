@@ -72,7 +72,16 @@ module "bastion" {
   }
 
   # Bastion connection audit trail -> Log Analytics (only when monitoring is on).
-  diagnostic_settings = var.enable_monitoring && module.monitoring.log_analytics_workspace_id != "" ? {
+  # Gate solely on var.enable_monitoring (a plan-time-known bool) so the map KEYS
+  # stay static at plan time. The AVM module does for_each over this map, which
+  # requires keys to be known during plan. Do NOT add a check against
+  # module.monitoring.log_analytics_workspace_id here: when a new workspace is
+  # created in the same apply, that ID is unknown until apply, which would make
+  # the whole map (and its keys) unknown and break for_each with
+  # "Invalid for_each argument". The workspace_resource_id VALUE may be unknown
+  # at plan time, which Terraform allows. When monitoring is on the ID is always
+  # non-empty (created or BYO); when off the map is empty.
+  diagnostic_settings = var.enable_monitoring ? {
     audit = {
       name                  = "${var.app_name}-bastion-audit"
       log_categories        = ["BastionAuditLogs"]
