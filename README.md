@@ -147,6 +147,8 @@ jobs:
 > (`...@v1`). The bundled `infra/` ships with the action at that exact ref, so the
 > Terraform always matches the version you pinned.
 
+Once infrastructure is deployed, see the [SOCKS proxy consumer guide](bastion-consumer-scripts/bastion-proxy.md) for instructions on connecting to the private network without a VPN.
+
 ## Configuration: tfvars + override inputs
 
 You can configure the deployment two ways, and combine them:

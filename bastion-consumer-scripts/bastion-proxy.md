@@ -23,6 +23,83 @@ matches your machine:
 
 ---
 
+## Quick start — no clone required
+
+> Time to first connection: **~2 minutes** once the prerequisites below are in place. If Azure CLI must be installed on first run, allow extra time.
+
+The direct-from-GitHub path is self-bootstrapping. The script installs Azure CLI and the required extensions if they are missing, checks for a valid Azure CLI session in your tenant, and opens browser-based Entra login with MFA if needed.
+
+Replace the placeholders with values for your deployment. The deployer's default naming is `<app_name>-<app_env>` for the resource group, `<app_name>-bastion` for the Bastion host, and `<app_name>-jumpbox` for the VM.
+
+| Parameter | Where to find it |
+|---|---|
+| `<tenant-id>` | Your Entra tenant ID — `az account show --query tenantId -o tsv` |
+| `<subscription-id>` | Your Azure subscription ID — `az account show --query id -o tsv` |
+| `<resource-group>` | Resource group holding the Bastion and VM (default: `<app_name>-<app_env>`) |
+| `<bastion-name>` | Name of the Bastion host (default: `<app_name>-bastion`) |
+| `<vm-name>` | Name of the jumpbox VM (default: `<app_name>-jumpbox`) |
+
+These variants download the script to a temp file, execute it, then delete it. Replace `main` with a tag or commit SHA if you want a fixed script version.
+
+**Bash:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/bastion-consumer-scripts/bastion-proxy.sh \
+  | bash -s -- \
+    --tenant         <tenant-id> \
+    --subscription   <subscription-id> \
+    --resource-group <resource-group> \
+    --bastion-name   <bastion-name> \
+    --vm-name        <vm-name> \
+    --port           8228
+```
+
+**PowerShell 7:**
+
+```powershell
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) 'bastion-proxy.ps1'
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/bastion-consumer-scripts/bastion-proxy.ps1' -OutFile $tmp
+try {
+  pwsh -ExecutionPolicy Bypass -File $tmp `
+    -TenantId       <tenant-id> `
+    -SubscriptionId <subscription-id> `
+    -ResourceGroup  <resource-group> `
+    -BastionName    <bastion-name> `
+    -VmName         <vm-name> `
+    -Port           8228
+}
+finally {
+  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+}
+```
+
+**Windows PowerShell 5.1:**
+
+```powershell
+$tmp = Join-Path $env:TEMP 'bastion-proxy.ps1'
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/bastion-consumer-scripts/bastion-proxy.ps1' -OutFile $tmp
+try {
+  powershell.exe -ExecutionPolicy Bypass -File $tmp `
+    -TenantId       <tenant-id> `
+    -SubscriptionId <subscription-id> `
+    -ResourceGroup  <resource-group> `
+    -BastionName    <bastion-name> `
+    -VmName         <vm-name> `
+    -Port           8228
+}
+finally {
+  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+}
+```
+
+The script prints when the SOCKS endpoint is live (default `localhost:8228`). **Keep this terminal window open** — closing it tears down the tunnel.
+
+> **Windows:** The PowerShell script automatically opens a dedicated proxy-configured browser window after the SOCKS tunnel is ready. It prefers **Edge** and falls back to **Chrome** if Edge is not installed.
+
+> Downloading to a `.ps1` first (instead of `iex`-piping) avoids quoting / variable-expansion issues and works correctly with the script's `CmdletBinding()` + `param()` signature.
+
+---
+
 ## Before you start
 
 You'll need three things. The good news: the script handles most of the setup
