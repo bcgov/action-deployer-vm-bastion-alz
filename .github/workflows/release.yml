@@ -33,7 +33,7 @@ jobs:
       # and publish the GitHub Release below. The Releases page is the changelog.
       - name: Compute next version and release notes
         id: changelog
-        uses: TriPSs/conventional-changelog-action@952b14bbc4be87e8458a6ac5926fc655608b1b19 # v6.3.1
+        uses: TriPSs/conventional-changelog-action@ee43def3241429afddab215ba89090cbf64fb45c # v6.4.0
         with:
           preset: "conventionalcommits"
           github-token: ${{ github.token }}
