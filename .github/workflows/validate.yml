@@ -46,9 +46,6 @@ jobs:
           tflint_version: latest
 
       - name: TFLint
-        # Advisory for now so a lint nit never blocks a release. Drop
-        # continue-on-error to make lint blocking once the team is comfortable.
-        continue-on-error: true
         working-directory: infra
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -68,9 +65,6 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Run PSScriptAnalyzer
-        # Advisory for now, same as TFLint above — a lint nit never blocks a
-        # release. Drop continue-on-error once the team is comfortable.
-        continue-on-error: true
         shell: pwsh
         run: |
           Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
