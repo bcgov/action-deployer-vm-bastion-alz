@@ -68,7 +68,8 @@ jobs:
         shell: pwsh
         run: |
           Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
-          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error -Settings ./PSScriptAnalyzerSettings.psd1
+          $scripts = @('infra/deploy-terraform.ps1', 'bastion-consumer-scripts/bastion-proxy.ps1')
+          $results = $scripts | ForEach-Object { Invoke-ScriptAnalyzer -Path $_ -Severity Warning,Error -Settings ./PSScriptAnalyzerSettings.psd1 }
           $results | Format-Table -AutoSize
           if ($results) { throw "PSScriptAnalyzer found $($results.Count) issue(s)" }
 

@@ -36,6 +36,10 @@ variable "use_oidc" {
   default     = true
 }
 
+# Cross-checked in the network module against the VNet Azure actually returns
+# (data.azurerm_virtual_network.main.address_space), not just its own syntax --
+# see modules/network/locals.tf. A mismatch means the secret is stale relative
+# to the real VNet and fails fast in plan instead of surfacing later.
 variable "vnet_address_space" {
   type        = string
   description = "Address space for the virtual network, it is created by platform team"

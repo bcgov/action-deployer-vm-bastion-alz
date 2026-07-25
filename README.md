@@ -196,7 +196,11 @@ platform team): a jumpbox subnet and `AzureBastionSubnet`. Both are always creat
 > **Validation.** Terraform rejects the deploy if `bastion_subnet_address_prefix`
 > is smaller than /26 (Azure Bastion requires at least a /26), if any subnet/VNet
 > value is not a valid CIDR, or if `bastion_subnet_name` is changed away from
-> `AzureBastionSubnet`.
+> `AzureBastionSubnet`. It also cross-checks against the VNet Azure actually
+> returns: `vnet_address_space` must match one of the VNet's real address
+> spaces, and both subnet prefixes must be contained within it — catching a
+> stale secret or an out-of-range subnet CIDR in `plan` instead of a later
+> Azure API error.
 
 ## Inputs
 
