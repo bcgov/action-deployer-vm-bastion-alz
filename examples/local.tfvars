@@ -63,6 +63,10 @@ vnet_address_space = "REPLACE_ME" # e.g. 10.46.115.0/24
 bastion_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.64/26  (must be /26 or larger)
 jumpbox_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.128/28
 
+# Subnet names default as shown. The Bastion subnet name MUST stay
+# "AzureBastionSubnet" (Azure Bastion requirement) — do not override it.
+# bastion_subnet_name = "AzureBastionSubnet"
+
 # Optional: override the jumpbox subnet name when another namespace already
 # uses the default "jumpbox-subnet" in this VNet.
 # jumpbox_subnet_name = "jumpbox-subnet"

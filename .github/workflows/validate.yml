@@ -46,9 +46,6 @@ jobs:
           tflint_version: latest
 
       - name: TFLint
-        # Advisory for now so a lint nit never blocks a release. Drop
-        # continue-on-error to make lint blocking once the team is comfortable.
-        continue-on-error: true
         working-directory: infra
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -58,12 +55,30 @@ jobs:
           tflint --init
           tflint --recursive
 
+  powershell:
+    name: PSScriptAnalyzer
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          $scripts = @('infra/deploy-terraform.ps1', 'bastion-consumer-scripts/bastion-proxy.ps1')
+          $results = $scripts | ForEach-Object { Invoke-ScriptAnalyzer -Path $_ -Severity Warning,Error -Settings ./PSScriptAnalyzerSettings.psd1 }
+          $results | Format-Table -AutoSize
+          if ($results) { throw "PSScriptAnalyzer found $($results.Count) issue(s)" }
+
   # Single aggregator — make only this job a required status check in branch
   # protection so renaming jobs above never requires editing the ruleset.
   results:
     name: Validate results
     if: always()
-    needs: [terraform]
+    needs: [terraform, powershell]
     runs-on: ubuntu-24.04
     steps:
       - name: Check validate result

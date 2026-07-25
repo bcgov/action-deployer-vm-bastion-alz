@@ -3,6 +3,26 @@ data "azurerm_virtual_network" "main" {
   resource_group_name = var.vnet_resource_group_name
 }
 
+# A `check` block (not a postcondition on the data source itself) so the
+# locals it references can depend on the data source's own attribute without
+# creating a dependency cycle back onto that same data source.
+check "vnet_and_subnets_consistent" {
+  assert {
+    condition     = local.vnet_address_space_matches_discovered
+    error_message = "vnet_address_space (${var.vnet_address_space}) does not match any address space on VNet '${var.vnet_name}' (actual: ${join(", ", data.azurerm_virtual_network.main.address_space)}). Update vnet_address_space to the real VNet address space."
+  }
+
+  assert {
+    condition     = local.subnet_containment["bastion_subnet_address_prefix"]
+    error_message = "bastion_subnet_address_prefix (${var.bastion_subnet_address_prefix}) is not contained within the address space of VNet '${var.vnet_name}' (${join(", ", data.azurerm_virtual_network.main.address_space)})."
+  }
+
+  assert {
+    condition     = local.subnet_containment["jumpbox_subnet_address_prefix"]
+    error_message = "jumpbox_subnet_address_prefix (${var.jumpbox_subnet_address_prefix}) is not contained within the address space of VNet '${var.vnet_name}' (${join(", ", data.azurerm_virtual_network.main.address_space)})."
+  }
+}
+
 
 # -----------------------------------------------------------------------------
 # Jumpbox VM Subnet and NSG

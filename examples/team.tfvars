@@ -5,8 +5,10 @@
 # action at it via the `tfvars_file` input. Override only what you need;
 # everything here except app_name/app_env has a sensible default.
 #
-# DO NOT put secrets here. subscription_id, client_id, tenant_id and the VNet
-# details are supplied by the workflow from GitHub secrets (OIDC).
+# DO NOT put secrets here. subscription_id, client_id, tenant_id, the VNet
+# details, and vm_admin_login_principal_ids are supplied by the workflow from
+# GitHub secrets (OIDC + VM_ADMIN_LOGIN_PRINCIPAL_IDS) — see the "Jumpbox
+# access" note below.
 # -----------------------------------------------------------------------------
 
 # --- Identity / namespace ----------------------------------------------------
@@ -27,6 +29,14 @@ app_env  = "tools"
 # Subnet CIDRs are required. The AzureBastionSubnet must be /26 or larger.
 bastion_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.64/26  (must be /26 or larger)
 jumpbox_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.128/28
+
+# --- Jumpbox access (VM Admin Login) ------------------------------------------
+# Required: vm_admin_login_principal_ids is NOT set here. It comes from the
+# VM_ADMIN_LOGIN_PRINCIPAL_IDS GitHub secret — a comma-separated string of
+# Entra object IDs (users/groups) that run-deploy.sh converts into this
+# Terraform list(string). It grants "Virtual Machine Administrator Login" on
+# the jumpbox; with none set, nobody can Entra-SSH in. See README.md ->
+# "Jumpbox access (VM Admin Login)".
 
 # --- Tags --------------------------------------------------------------------
 # The workflow sets a default common_tags map. Uncomment to fully control tags.

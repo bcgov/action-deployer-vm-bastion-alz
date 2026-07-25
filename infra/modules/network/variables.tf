@@ -21,8 +21,8 @@ variable "resource_group_name" {
 }
 
 variable "vnet_address_space" {
+  description = "Caller-supplied address space for the existing VNet. Cross-checked in locals.tf against the VNet Azure actually returns."
   type        = string
-  description = "Address space for the virtual network, it is created by platform team"
   nullable    = false
 }
 
