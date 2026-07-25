@@ -342,7 +342,7 @@ function Test-AzExtensionCache {
         })
 }
 
-function Ensure-AzExtensionCacheReady {
+function Confirm-AzExtensionCacheReady {
     if (-not $env:AZURE_EXTENSION_DIR) {
         $env:AZURE_EXTENSION_DIR = Join-Path $HOME '.azure\cliextensions-bastion-proxy'
         Write-Info "Using dedicated Azure CLI extension cache: $env:AZURE_EXTENSION_DIR"
@@ -494,7 +494,7 @@ function Write-CommandLogTail {
 Write-Info 'Checking prerequisites...'
 Install-AzureCliIfMissing
 
-Ensure-AzExtensionCacheReady
+Confirm-AzExtensionCacheReady
 
 Install-AzExtensionIfMissing -ExtensionName 'bastion'
 Install-AzExtensionIfMissing -ExtensionName 'ssh'
@@ -802,16 +802,17 @@ try {
     Write-Info "Azure Bastion SSH process $($proc.Id) exited with code $exitCode."
 }
 finally {
-    # Stop the timer runspace
+    # Stop the timer runspace. Best-effort cleanup: swallow failures here since
+    # the runspace may already be stopped/disposed by the time we reach it.
     if ($timerAsyncResult) {
-        try { $timerAsyncResult.AsyncWaitHandle.Close() } catch {}
+        try { $timerAsyncResult.AsyncWaitHandle.Close() } catch { $null = $_ }
     }
     if ($rsPs) {
-        try { $rsPs.Stop() } catch {}
-        try { $rsPs.Dispose() } catch {}
+        try { $rsPs.Stop() } catch { $null = $_ }
+        try { $rsPs.Dispose() } catch { $null = $_ }
     }
     if ($runspace) {
-        try { $runspace.Dispose() } catch {}
+        try { $runspace.Dispose() } catch { $null = $_ }
     }
 
     # Ensure process tree is dead (idempotent if already exited)
