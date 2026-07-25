@@ -454,7 +454,7 @@ with:
 ├── action.yml                       # Composite action (entry point)
 ├── .github/
 │   ├── workflows/
-│   │   ├── validate.yml               # PR gate: terraform fmt/validate + tflint
+│   │   ├── validate.yml               # PR gate: terraform fmt/validate + tflint + PSScriptAnalyzer
 │   │   ├── release.yml                # Tag + GitHub Release on push to main
 │   │   └── dependabot-auto-merge.yml  # Auto-approve + merge Dependabot PRs
 │   ├── scripts/
@@ -463,7 +463,8 @@ with:
 │   └── dependabot.yml
 ├── infra/                       # Bundled Terraform (Bastion + jumpbox + ...)
 │   ├── main.tf                  # Root: RG + Bastion (AVM) + network/monitoring/jumpbox modules
-│   ├── deploy-terraform.sh      # init/plan/apply/destroy orchestration
+│   ├── deploy-terraform.sh      # init/plan/apply/destroy orchestration (Bash; also runs in CI)
+│   ├── deploy-terraform.ps1     # Same orchestration for local use (PowerShell; local only)
 │   └── modules/                 # network, jumpbox (VM via AVM), monitoring
 ├── bastion-consumer-scripts/    # Hand to teams to reach the jumpbox via Bastion
 │   ├── bastion-proxy.sh         # SOCKS5 proxy tunnel (macOS/Linux/Git Bash)
@@ -500,7 +501,16 @@ REVIEW_COUNT=2 REQUIRED_CHECKS="terraform-validate,lint" \
 
 ## Local deployment
 
-The same `infra/deploy-terraform.sh` script that the composite action runs in CI works directly on a developer workstation — useful for ad-hoc deploys, one-off troubleshooting, or testing before wiring up CI. It uses Azure CLI authentication instead of OIDC.
+The same Terraform orchestration that the composite action runs in CI is also available
+directly on a developer workstation — useful for ad-hoc deploys, one-off troubleshooting, or
+testing before wiring up CI. Both use Azure CLI authentication instead of OIDC and run
+identical Terraform commands:
+
+- **`infra/deploy-terraform.sh`** (Bash) — macOS, Linux, Git Bash, or WSL2. Also the script CI runs.
+- **`infra/deploy-terraform.ps1`** (PowerShell) — native Windows, 5.1 (preinstalled) or 7+. No
+  Git Bash or WSL2 needed.
+
+Every command below is shown for both; pick whichever matches your shell.
 
 ### Prerequisites
 
@@ -508,17 +518,32 @@ Install the following tools before running locally:
 
 | Tool | Minimum version | Install guide |
 |---|---|---|
-| [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | 2.65+ | See platform instructions below |
-| [Terraform](https://developer.hashicorp.com/terraform/install) | 1.12+ | See platform instructions below |
+| [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | 2.65+ | See platform instructions below. **On Windows, `deploy-terraform.ps1` installs it automatically if missing** — manual install is optional. |
+| [Terraform](https://developer.hashicorp.com/terraform/install) | 1.12+ | See platform instructions below. **On Windows, `deploy-terraform.ps1` installs it automatically if missing** — manual install is optional. |
 | [Git](https://git-scm.com/downloads) | 2.x | Pre-installed on macOS/Linux |
-| Bash | 4.x+ | Windows: use **Git Bash** (from Git for Windows) or **WSL2** |
+| A shell | — | macOS/Linux: **Bash 4.x+**. Windows: **PowerShell** (5.1+ preinstalled, or 7+) runs `deploy-terraform.ps1` natively; Git Bash/WSL2 are only needed if you'd rather run the `.sh` script. |
+
+> **Windows auto-install.** `infra/deploy-terraform.ps1` checks for Terraform and the Azure
+> CLI on every run and installs whichever is missing — via WinGet, falling back to
+> Chocolatey, falling back to a direct download (same pattern
+> [`bastion-proxy.ps1`](bastion-consumer-scripts/bastion-proxy.ps1) already uses for the Azure
+> CLI). You can skip the manual installs below entirely and just run the script; it prints
+> what it's installing as it goes.
 
 Verify after installing:
 
 ```bash
+# macOS / Linux / Git Bash
 az version         # must show "azure-cli": "2.65.0" or higher
 terraform version  # must show Terraform v1.12.x or higher
 bash --version     # must be 4.x+ (macOS ships 3.2 — install via Homebrew)
+```
+
+```powershell
+# Windows PowerShell
+az version                  # must show "azure-cli": "2.65.0" or higher
+terraform version           # must show Terraform v1.12.x or higher
+$PSVersionTable.PSVersion   # 5.1+ (Windows PowerShell) or 7.x (pwsh) both work
 ```
 
 #### macOS (Homebrew)
@@ -527,19 +552,27 @@ bash --version     # must be 4.x+ (macOS ships 3.2 — install via Homebrew)
 brew update
 brew install azure-cli
 brew tap hashicorp/tap && brew install hashicorp/tap/terraform
-brew install bash          # macOS ships Bash 3.2; the deploy script requires 4+
+brew install bash          # macOS ships Bash 3.2; deploy-terraform.sh requires 4+
 ```
 
 #### Windows (winget)
 
+Optional — `infra/deploy-terraform.ps1` installs both automatically on first run if they're
+missing. Install manually only if you want them ready ahead of time:
+
 ```powershell
 winget install Microsoft.AzureCLI
 winget install HashiCorp.Terraform
-# Git for Windows (includes Git Bash):
-winget install Git.Git
 ```
 
-Run all deploy commands in **Git Bash**, not PowerShell or cmd.exe — the deploy script is a Bash script.
+Run deploy commands with `infra/deploy-terraform.ps1` in **PowerShell** — Windows PowerShell
+5.1 (preinstalled) or PowerShell 7+ both work, no Git Bash or WSL2 required. If you'd rather
+run the original Bash script (`infra/deploy-terraform.sh`), also install Git for Windows
+(includes Git Bash):
+
+```powershell
+winget install Git.Git
+```
 
 #### Linux (apt / manual)
 
@@ -591,7 +624,14 @@ az account show --query "[name, id]" -o tsv
 **3. Create a local tfvars file**
 
 ```bash
+# macOS / Linux / Git Bash
 cp examples/local.tfvars infra/terraform.tfvars
+# Edit infra/terraform.tfvars — replace every REPLACE_ME placeholder
+```
+
+```powershell
+# Windows PowerShell
+Copy-Item examples/local.tfvars infra/terraform.tfvars
 # Edit infra/terraform.tfvars — replace every REPLACE_ME placeholder
 ```
 
@@ -600,9 +640,18 @@ cp examples/local.tfvars infra/terraform.tfvars
 **4. Set backend environment variables**
 
 ```bash
+# macOS / Linux / Git Bash
 export BACKEND_RESOURCE_GROUP="<resource-group-of-storage-account>"
 export BACKEND_STORAGE_ACCOUNT="<storage-account-name>"    # from STORAGE_ACCOUNT_NAME in GHA
 export BACKEND_STATE_KEY="my-app/tools/terraform.tfstate"  # must match the key used in CI
+# BACKEND_CONTAINER_NAME defaults to "tfstate" — override if your container differs
+```
+
+```powershell
+# Windows PowerShell
+$env:BACKEND_RESOURCE_GROUP = "<resource-group-of-storage-account>"
+$env:BACKEND_STORAGE_ACCOUNT = "<storage-account-name>"    # from STORAGE_ACCOUNT_NAME in GHA
+$env:BACKEND_STATE_KEY = "my-app/tools/terraform.tfstate"  # must match the key used in CI
 # BACKEND_CONTAINER_NAME defaults to "tfstate" — override if your container differs
 ```
 
@@ -611,9 +660,17 @@ Use the same storage account created by `initial-azure-setup.sh`. Sharing the ba
 **5. Plan and apply**
 
 ```bash
+# macOS / Linux / Git Bash
 ./infra/deploy-terraform.sh plan     # preview changes (no Azure writes)
 ./infra/deploy-terraform.sh apply    # deploy (prompts for confirmation — no auto-approve locally)
 ./infra/deploy-terraform.sh destroy  # tear down (also prompts for confirmation)
+```
+
+```powershell
+# Windows PowerShell
+.\infra\deploy-terraform.ps1 plan     # preview changes (no Azure writes)
+.\infra\deploy-terraform.ps1 apply    # deploy (prompts for confirmation — no auto-approve locally)
+.\infra\deploy-terraform.ps1 destroy  # tear down (also prompts for confirmation)
 ```
 
 ### Local vs GHA differences
@@ -658,6 +715,7 @@ The [`examples/local.tfvars`](examples/local.tfvars) template includes every req
 ### Useful local commands
 
 ```bash
+# macOS / Linux / Git Bash
 # Show Terraform outputs after a successful apply
 ./infra/deploy-terraform.sh output
 
@@ -678,6 +736,28 @@ The [`examples/local.tfvars`](examples/local.tfvars) template includes every req
 ./infra/deploy-terraform.sh state rm <resource.address>
 ```
 
+```powershell
+# Windows PowerShell
+# Show Terraform outputs after a successful apply
+.\infra\deploy-terraform.ps1 output
+
+# Target a specific module (e.g. re-apply Bastion only)
+.\infra\deploy-terraform.ps1 apply -target=module.bastion
+
+# Validate syntax and format — no Azure auth or backend needed
+.\infra\deploy-terraform.ps1 validate
+.\infra\deploy-terraform.ps1 fmt
+
+# List all resources tracked in state
+.\infra\deploy-terraform.ps1 state list
+
+# Refresh state from Azure (after out-of-band changes)
+.\infra\deploy-terraform.ps1 refresh
+
+# Remove a resource from state without destroying it in Azure
+.\infra\deploy-terraform.ps1 state rm <resource.address>
+```
+
 **Connect to the jumpbox after deployment:**
 
 Use the bundled script to open a SOCKS5 proxy tunnel through Azure Bastion. It installs the Bastion CLI extension on first use, starts the jumpbox if auto-shutdown has deallocated it, and waits for the proxy to come up. Log in first with `az login`.
@@ -686,12 +766,25 @@ Derive the names from Terraform outputs and your current Azure context (run from
 the repo root):
 
 ```bash
+# macOS / Linux / Git Bash
 # Resource names from Terraform state; subscription/tenant from your az login
 RG="<app_name>-<app_env>"   # e.g. my-app-tools
 BASTION_NAME="$(cd infra && terraform output -raw bastion_resource_id | sed 's|.*/||')"
 VM_NAME="$(cd infra && terraform output -raw jumpbox_vm_id            | sed 's|.*/||')"
 SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
 TENANT_ID="$(az account show --query tenantId -o tsv)"
+```
+
+```powershell
+# Windows PowerShell
+# Resource names from Terraform state; subscription/tenant from your az login
+$RG = "<app_name>-<app_env>"   # e.g. my-app-tools
+Push-Location infra
+$BASTION_NAME = (terraform output -raw bastion_resource_id) -replace '.*/', ''
+$VM_NAME      = (terraform output -raw jumpbox_vm_id)       -replace '.*/', ''
+Pop-Location
+$SUBSCRIPTION_ID = az account show --query id -o tsv
+$TENANT_ID       = az account show --query tenantId -o tsv
 ```
 
 **macOS / Linux / Windows (Git Bash)** — [`bastion-consumer-scripts/bastion-proxy.sh`](bastion-consumer-scripts/bastion-proxy.sh):
@@ -706,4 +799,16 @@ TENANT_ID="$(az account show --query tenantId -o tsv)"
   -p 8228
 ```
 
-Once the tunnel is ready the script prints the proxy address; point your browser or CLI at `socks5h://127.0.0.1:8228` to reach private endpoints. Traffic routed through the SOCKS5 proxy is resolved and forwarded by the jumpbox, giving access to private PaaS endpoints without a VPN. Pass the starting port with `-p` (here `8228`); if it's already in use the script picks the next free one and prints it.
+**Windows (PowerShell)** — [`bastion-consumer-scripts/bastion-proxy.ps1`](bastion-consumer-scripts/bastion-proxy.ps1):
+
+```powershell
+.\bastion-consumer-scripts\bastion-proxy.ps1 `
+  -ResourceGroup $RG `
+  -BastionName $BASTION_NAME `
+  -VmName $VM_NAME `
+  -SubscriptionId $SUBSCRIPTION_ID `
+  -TenantId $TENANT_ID `
+  -Port 8228
+```
+
+Once the tunnel is ready the script prints the proxy address; point your browser or CLI at `socks5h://127.0.0.1:8228` to reach private endpoints. Traffic routed through the SOCKS5 proxy is resolved and forwarded by the jumpbox, giving access to private PaaS endpoints without a VPN. Pass the starting port with `-p`/`-Port` (here `8228`); if it's already in use the script picks the next free one and prints it.
