@@ -438,9 +438,15 @@ that can live **anywhere on disk** — it does not have to be `infra/terraform.t
 ```
 
 - **`-TfvarsPath`** points at your filled-in copy of [`examples/local.tfvars`](examples/local.tfvars) — anywhere on disk.
-- **`-Mode local`** is explicit and self-documenting (room for future modes later); it does not by itself force local Terraform state — see the backend note below.
+- **`-Mode local`** is explicit and self-documenting (room for future modes later); it does not by itself force local Terraform state — see the backend note below. The selected mode is echoed at the start of each `deploy` run.
 - **Backend**: if `BACKEND_RESOURCE_GROUP`, `BACKEND_STORAGE_ACCOUNT`, and `BACKEND_STATE_KEY` are all set, `deploy` uses the same shared `azurerm` backend as CI. If any are unset, it automatically falls back to **local Terraform state** (`infra/terraform.tfstate`, this machine only) and prints a warning — do not rely on the fallback for team/shared deployments.
-- Still just one confirmation prompt: `terraform apply`'s own interactive "yes" prompt. `deploy` never passes `-auto-approve`.
+- **Switching backends is refused, not guessed.** `deploy` records which backend it last used. If that changes (local → `azurerm` or back), it stops with migration instructions instead of re-initializing. Terraform's `-reconfigure` *discards* the link to your existing state rather than migrating it, so continuing automatically would strand the old state and make the next apply re-create resources that already exist. To move state deliberately:
+
+  ```powershell
+  terraform -chdir=infra init -migrate-state -backend-config=resource_group_name=... -backend-config=storage_account_name=... -backend-config=container_name=... -backend-config=key=...
+  ```
+
+- Still just one confirmation prompt: `terraform apply`'s own interactive "yes" prompt. `deploy` never passes `-auto-approve`. For that reason **`deploy` refuses to run when `CI=true`** — its apply would block forever on a prompt no pipeline can answer. Use `init` + `apply` in CI, which auto-approve.
 
 #### No clone required — run directly from GitHub
 
@@ -485,8 +491,14 @@ finally {
 
 The first run clones the repo into `%LOCALAPPDATA%\bcgov\action-deployer-vm-bastion-alz\<ref>\`
 (Git required, installed automatically if missing). Later runs reuse that cached checkout —
-and, in local-state mode, its Terraform state — instead of cloning again. Add `-Ref v1` (a
-released tag or branch) to pin a specific version instead of tracking `main`.
+and, in local-state mode, its Terraform state — instead of cloning again. Concurrent runs
+against the same cached checkout are serialized, so two shells cannot clobber each other's
+checkout or backend state.
+
+**Pin a version.** `-Ref` defaults to `main`, which moves: two runs of the same command days
+apart can deploy different infrastructure. The script warns when it falls back to that default.
+Add `-Ref v1` (a released tag or branch) to pin instead. Refs are validated — anything that
+could be read as a `git` option or escape the cache directory is rejected.
 
 > **Why admin PowerShell?** WinGet/Chocolatey/direct-download installs of Terraform, the Azure
 > CLI, and Git can write to machine-wide locations (`Program Files`, the machine `PATH`), which
@@ -507,10 +519,15 @@ Install the following tools before running locally:
 > **Windows auto-install.** `infra/deploy-terraform.ps1` checks for Terraform and the Azure
 > CLI on every run (and Git too, for standalone `deploy` runs — see
 > [One-step local deploy](#one-step-local-deploy)) and installs whichever is missing — via
-> WinGet, falling back to Chocolatey, falling back to a direct download (same pattern
+> WinGet, then Chocolatey, then a direct download (same pattern
 > [`bastion-proxy.ps1`](bastion-consumer-scripts/bastion-proxy.ps1) already uses for the Azure
-> CLI). You can skip the manual installs below entirely and just run the script; it prints
-> what it's installing as it goes.
+> CLI). Each method is tried **in turn until one leaves the tool on `PATH`**, so a WinGet that
+> is missing *or* fails simply moves on to the next. You can skip the manual installs below
+> entirely and just run the script; it prints what it's installing as it goes.
+>
+> **Direct downloads are verified before they run.** The Terraform zip is checked against
+> HashiCorp's published `SHA256SUMS`, and the Azure CLI MSI and Git installer against their
+> Authenticode signatures. A mismatch aborts that method rather than executing the file.
 
 Verify after installing:
 
@@ -641,6 +658,17 @@ $env:BACKEND_STATE_KEY = "my-app/tools/terraform.tfstate"  # must match the key 
 
 Use the same storage account created by `initial-azure-setup.sh`. Sharing the backend with CI means local and CI deployments operate on the same state file.
 
+> **These are required for every command except `deploy`, `fmt` and `validate`.** If they are
+> unset and the directory has not already been switched to local state by a previous `deploy`,
+> `deploy-terraform.ps1` stops with that explanation rather than initializing against an empty
+> backend configuration. Either set the three variables above, or use
+> [`deploy`](#one-step-local-deploy), which falls back to local state on purpose.
+>
+> The reverse is also checked: if a previous `deploy` left `infra/local_backend_override.tf` in
+> place (local state) **and** `BACKEND_*` is now set, the two disagree — the script refuses to
+> run instead of silently using local state while you believe you are on the shared backend.
+> Every command prints the backend actually in effect before it does anything.
+
 #### 5. Plan and apply
 
 ```bash
@@ -669,7 +697,8 @@ Use the same storage account created by `initial-azure-setup.sh`. Sharing the ba
 | `common_tags` | JSON map injected as `TF_VAR_common_tags` env var | HCL map literal in tfvars |
 | `resource_group_name` | Defaults to `<app_name>-<app_env>` | Must be set explicitly in tfvars |
 | **Auto-approve** | Yes (`CI=true`) | No — script prompts `yes` before apply/destroy |
-| **State backend** | Set via action inputs | Set via `BACKEND_*` env vars, or local state on this machine if unset (`deploy` command only — see [One-step local deploy](#one-step-local-deploy)) |
+| **State backend** | Set via action inputs | Set via `BACKEND_*` env vars, or local state on this machine if unset (`deploy` command only — see [One-step local deploy](#one-step-local-deploy)). Other commands require `BACKEND_*` unless a previous `deploy` already switched the directory to local state; the effective backend is printed on every run |
+| **Script logging** | — | `deploy-terraform.ps1` writes its `[deploy]` log lines to **stderr**, matching `deploy-terraform.sh`. `... output > file.txt` therefore captures only Terraform's own output |
 
 ### Local tfvars fields
 

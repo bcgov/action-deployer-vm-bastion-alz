@@ -6,9 +6,11 @@
     # interactive-CLI script style -- not an oversight. Anything not listed here
     # is expected to pass; do not add to this list without a documented reason.
     ExcludeRules = @(
-        # Both scripts are interactive console tools meant to be run directly by
-        # a human; Write-Host is the correct choice for terminal output here,
-        # not library code that needs to compose with the output pipeline.
+        # bastion-proxy.ps1 is an interactive console tool meant to be run
+        # directly by a human; Write-Host is the correct choice for its terminal
+        # output, not library code that needs to compose with the output
+        # pipeline. (deploy-terraform.ps1 no longer uses Write-Host -- it logs to
+        # stderr so its output redirects the same way deploy-terraform.sh's does.)
         'PSAvoidUsingWriteHost',
 
         # These are private, script-internal helpers, not published cmdlets --
@@ -20,6 +22,14 @@
         # referenced inside a function defined later in the same script -- a
         # known limitation of this rule's static analysis, not a real unused
         # parameter.
+        #
+        # Verify this claim per-parameter before relying on it. It previously
+        # masked a genuinely unused -Mode parameter in deploy-terraform.ps1
+        # (now logged on every `deploy`); a suppression that hides one real
+        # finding among four false ones is worse than no suppression at all.
+        # To re-check:
+        #   Invoke-ScriptAnalyzer -Path <script> -IncludeRule PSReviewUnusedParameter
+        # then confirm each flagged parameter is referenced somewhere in the file.
         'PSReviewUnusedParameter'
     )
 }
