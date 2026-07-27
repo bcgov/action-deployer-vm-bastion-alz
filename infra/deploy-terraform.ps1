@@ -444,7 +444,6 @@ function Set-VariablesSource {
         $script:UseTfvars = $true
         $script:TfvarsArgs = @("-var-file=$TfvarsFile")
         Write-DeployLog 'Using terraform.tfvars'
-        Test-TfvarsNoPlaceholder -Path $TfvarsFile
         return
     }
 
@@ -648,6 +647,9 @@ function Invoke-Main {
         $script:InfraDir = Resolve-InfraDir -Ref $Ref
     }
     $script:TfvarsFile = Resolve-TfvarsPath -Explicit $TfvarsPath
+    if (Test-Path $script:TfvarsFile -PathType Leaf) {
+        Test-TfvarsNoPlaceholder -Path $script:TfvarsFile
+    }
 
     Install-TerraformIfMissing
 
