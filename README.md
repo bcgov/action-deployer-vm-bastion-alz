@@ -516,6 +516,73 @@ identical Terraform commands:
 
 Every command below is shown for both; pick whichever matches your shell.
 
+### One-step local deploy
+
+`deploy-terraform.ps1 deploy` collapses the five manual steps below into one PowerShell
+command: it installs Terraform, the Azure CLI, and Git if any are missing, signs in to Azure
+if needed, then runs `terraform init` + `terraform apply` against a `terraform.tfvars` file
+that can live **anywhere on disk** — it does not have to be `infra/terraform.tfvars`.
+
+```powershell
+.\infra\deploy-terraform.ps1 deploy -TfvarsPath 'C:\path\to\my.tfvars' -Mode local
+```
+
+- **`-TfvarsPath`** points at your filled-in copy of [`examples/local.tfvars`](examples/local.tfvars) — anywhere on disk.
+- **`-Mode local`** is explicit and self-documenting (room for future modes later); it does not by itself force local Terraform state — see the backend note below.
+- **Backend**: if `BACKEND_RESOURCE_GROUP`, `BACKEND_STORAGE_ACCOUNT`, and `BACKEND_STATE_KEY` are all set, `deploy` uses the same shared `azurerm` backend as CI. If any are unset, it automatically falls back to **local Terraform state** (`infra/terraform.tfstate`, this machine only) and prints a warning — do not rely on the fallback for team/shared deployments.
+- Still just one confirmation prompt: `terraform apply`'s own interactive "yes" prompt. `deploy` never passes `-auto-approve`.
+
+#### No clone required — run directly from GitHub
+
+`deploy` also works when you download just this one script — no `git clone`, and Git does not
+need to be pre-installed: the script installs Git automatically (same as Terraform/Azure CLI
+above) and uses it to fetch the rest of the Terraform config it needs behind the scenes.
+**Run from an elevated ("Run as Administrator") PowerShell** — installing Terraform, the Azure
+CLI, or Git machine-wide can require it.
+
+Get a tfvars template first (also no clone needed):
+
+```powershell
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/examples/local.tfvars' -OutFile my.tfvars
+# Edit my.tfvars -- replace every REPLACE_ME placeholder
+```
+
+Then download and run `deploy-terraform.ps1` itself:
+
+```powershell
+# PowerShell 7 (pwsh) -- run as Administrator
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) 'deploy-terraform.ps1'
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/infra/deploy-terraform.ps1' -OutFile $tmp
+try {
+  pwsh -ExecutionPolicy Bypass -File $tmp deploy -TfvarsPath 'C:\path\to\my.tfvars' -Mode local
+}
+finally {
+  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+}
+```
+
+```powershell
+# Windows PowerShell 5.1 -- run as Administrator
+$tmp = Join-Path $env:TEMP 'deploy-terraform.ps1'
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/infra/deploy-terraform.ps1' -OutFile $tmp
+try {
+  powershell.exe -ExecutionPolicy Bypass -File $tmp deploy -TfvarsPath 'C:\path\to\my.tfvars' -Mode local
+}
+finally {
+  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+}
+```
+
+The first run clones the repo into `%LOCALAPPDATA%\bcgov\action-deployer-vm-bastion-alz\<ref>\`
+(Git required, installed automatically if missing). Later runs reuse that cached checkout —
+and, in local-state mode, its Terraform state — instead of cloning again. Add `-Ref v1` (a
+released tag or branch) to pin a specific version instead of tracking `main`.
+
+> **Why admin PowerShell?** WinGet/Chocolatey/direct-download installs of Terraform, the Azure
+> CLI, and Git can write to machine-wide locations (`Program Files`, the machine `PATH`), which
+> normally requires elevation. A non-elevated prompt still works if those tools are already
+> installed, or if your WinGet installs are scoped per-user.
+
 ### Prerequisites
 
 Install the following tools before running locally:
@@ -524,12 +591,13 @@ Install the following tools before running locally:
 |---|---|---|
 | [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | 2.65+ | See platform instructions below. **On Windows, `deploy-terraform.ps1` installs it automatically if missing** — manual install is optional. |
 | [Terraform](https://developer.hashicorp.com/terraform/install) | 1.12+ | See platform instructions below. **On Windows, `deploy-terraform.ps1` installs it automatically if missing** — manual install is optional. |
-| [Git](https://git-scm.com/downloads) | 2.x | Pre-installed on macOS/Linux |
+| [Git](https://git-scm.com/downloads) | 2.x | Pre-installed on macOS/Linux. **`deploy-terraform.ps1 deploy` installs it automatically if missing** when run standalone with no local checkout — manual install is optional in that case. Other commands assume you've already cloned the repo. |
 | A shell | — | macOS/Linux: **Bash 4.x+**. Windows: **PowerShell** (5.1+ preinstalled, or 7+) runs `deploy-terraform.ps1` natively; Git Bash/WSL2 are only needed if you'd rather run the `.sh` script. |
 
 > **Windows auto-install.** `infra/deploy-terraform.ps1` checks for Terraform and the Azure
-> CLI on every run and installs whichever is missing — via WinGet, falling back to
-> Chocolatey, falling back to a direct download (same pattern
+> CLI on every run (and Git too, for standalone `deploy` runs — see
+> [One-step local deploy](#one-step-local-deploy)) and installs whichever is missing — via
+> WinGet, falling back to Chocolatey, falling back to a direct download (same pattern
 > [`bastion-proxy.ps1`](bastion-consumer-scripts/bastion-proxy.ps1) already uses for the Azure
 > CLI). You can skip the manual installs below entirely and just run the script; it prints
 > what it's installing as it goes.
@@ -603,6 +671,10 @@ Your user account needs the following RBAC roles on the target subscription:
 > **Owner** on the subscription covers all three. For least-privilege, scope **Network Contributor** to just the VNet resource group rather than the whole subscription.
 
 ### Step-by-step local deployment
+
+Prefer a single command? See [One-step local deploy](#one-step-local-deploy) above — it
+automates steps 1–5 below into one `deploy` call. The walkthrough here is the manual, granular
+version: useful if you want more control, or hit an issue with `deploy`.
 
 **1. Clone this repo at a specific version**
 
@@ -689,7 +761,7 @@ Use the same storage account created by `initial-azure-setup.sh`. Sharing the ba
 | `common_tags` | JSON map injected as `TF_VAR_common_tags` env var | HCL map literal in tfvars |
 | `resource_group_name` | Defaults to `<app_name>-<app_env>` | Must be set explicitly in tfvars |
 | **Auto-approve** | Yes (`CI=true`) | No — script prompts `yes` before apply/destroy |
-| **State backend** | Set via action inputs | Set via `BACKEND_*` env vars |
+| **State backend** | Set via action inputs | Set via `BACKEND_*` env vars, or local state on this machine if unset (`deploy` command only — see [One-step local deploy](#one-step-local-deploy)) |
 
 ### Local tfvars fields
 
