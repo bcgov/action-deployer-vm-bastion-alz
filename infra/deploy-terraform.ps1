@@ -5,21 +5,33 @@
 # Usage (from repo root or infra/):
 #   .\infra\deploy-terraform.ps1 <command> [terraform args...]
 #
-# Commands: init | plan | apply | destroy | validate | fmt | output | refresh | state
+# Commands: init | plan | apply | destroy | validate | fmt | output | refresh | state | deploy
+#
+# `deploy` is a one-step command for a developer workstation: installs
+# Terraform/Azure CLI/Git if missing, logs in to Azure if needed, resolves a
+# terraform.tfvars file from anywhere on disk (-TfvarsPath), auto-selects a
+# Terraform backend (azurerm if BACKEND_* env vars are set, otherwise local
+# state on this machine), then runs init + apply. It also works when this
+# script is downloaded standalone with no repo clone -- see README.md ->
+# "Local deployment" -> "One-step local deploy".
 #
 # This is the PowerShell equivalent of deploy-terraform.sh for local use on
-# Windows without Git Bash/WSL. Behavior matches the bash script; see
-# README.md -> "Local deployment" for the full walkthrough.
+# Windows without Git Bash/WSL. Behavior matches the bash script (`deploy` is
+# PowerShell-only); see README.md -> "Local deployment" for the full walkthrough.
 #
-# Auto-install: Terraform and the Azure CLI are installed automatically if
-# missing (winget, then Chocolatey, then a direct download), the same way
-# bastion-consumer-scripts/bastion-proxy.ps1 already installs the Azure CLI.
+# Auto-install: Terraform, the Azure CLI, and (for standalone `deploy` runs)
+# Git are installed automatically if missing (winget, then Chocolatey, then a
+# direct download), the same way bastion-consumer-scripts/bastion-proxy.ps1
+# already installs the Azure CLI. Machine-wide installs can prompt for
+# elevation -- run from an elevated ("Run as Administrator") PowerShell to
+# avoid interruptions.
 #
 # Environment:
 #   CI=true                  auto-approve apply/destroy, no interactive prompts
 #   ARM_USE_OIDC=true        use OIDC (CI); otherwise Azure CLI auth is used
 #   BACKEND_RESOURCE_GROUP / BACKEND_STORAGE_ACCOUNT / BACKEND_CONTAINER_NAME /
-#   BACKEND_STATE_KEY        azurerm remote-state backend config
+#   BACKEND_STATE_KEY        azurerm remote-state backend config; omit all to
+#                            let `deploy` fall back to local Terraform state
 #   TF_VAR_*                 standard Terraform variables
 #
 # =============================================================================
@@ -27,8 +39,22 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('init', 'plan', 'apply', 'destroy', 'validate', 'fmt', 'output', 'refresh', 'state')]
+    [ValidateSet('init', 'plan', 'apply', 'destroy', 'validate', 'fmt', 'output', 'refresh', 'state', 'deploy')]
     [string]$Command,
+
+    # Path to a terraform.tfvars file anywhere on disk (absolute or relative).
+    # Defaults to infra/terraform.tfvars (today's behavior) when omitted.
+    [string]$TfvarsPath,
+
+    # Only 'local' exists today. Explicit and self-documenting so a future
+    # non-breaking addition (e.g. a remote-exec mode) has a home.
+    [ValidateSet('local')]
+    [string]$Mode = 'local',
+
+    # Branch or tag `deploy` self-clones when run standalone, i.e. this script
+    # has no infra/ checkout next to it (downloaded directly via
+    # raw.githubusercontent.com rather than as part of a repo clone).
+    [string]$Ref = 'main',
 
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
     [string[]]$RemainingArgs
@@ -38,7 +64,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $InfraDir = $PSScriptRoot
-$TfvarsFile = Join-Path $InfraDir 'terraform.tfvars'
+$TfvarsFile = $null # resolved in Invoke-Main by Resolve-TfvarsPath
 
 $BackendResourceGroup = if ($env:BACKEND_RESOURCE_GROUP) { $env:BACKEND_RESOURCE_GROUP } else { '' }
 $BackendStorageAccount = if ($env:BACKEND_STORAGE_ACCOUNT) { $env:BACKEND_STORAGE_ACCOUNT } else { '' }
@@ -147,6 +173,55 @@ function Install-AzureCliIfMissing {
     Write-DeployLog "Azure CLI ready: $(Get-ExecutableCommandPath (Get-Command az))"
 }
 
+function Install-GitIfMissing {
+    if (Test-CommandAvailable 'git') {
+        Write-DeployLog "Git ready: $(Get-ExecutableCommandPath (Get-Command git))"
+        return
+    }
+
+    Write-DeployLog 'Git is not installed. Attempting installation...'
+
+    $wingetCommand = Get-InstallerCommand -Names @('winget.exe', 'winget')
+    $chocoCommand = Get-InstallerCommand -Names @('choco.exe', 'choco')
+
+    if ($wingetCommand) {
+        $wingetPath = Get-ExecutableCommandPath $wingetCommand
+        Write-DeployLog 'Installing Git with WinGet...'
+        & $wingetPath install --exact --id Git.Git --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-DeployLog "WARN: WinGet returned exit code $LASTEXITCODE while installing Git." }
+    }
+    elseif ($chocoCommand) {
+        $chocoPath = Get-ExecutableCommandPath $chocoCommand
+        Write-DeployLog 'Installing Git with Chocolatey...'
+        & $chocoPath install git -y 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-DeployLog "WARN: Chocolatey returned exit code $LASTEXITCODE while installing Git." }
+    }
+    else {
+        $installerPath = Join-Path $env:TEMP 'GitInstaller.exe'
+        Write-DeployLog 'Installing Git with the official Git for Windows installer...'
+        try {
+            $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/git-for-windows/git/releases/latest' -TimeoutSec 15
+            $asset = $release.assets | Where-Object { $_.name -match '64-bit\.exe$' } | Select-Object -First 1
+            if (-not $asset) { throw 'Could not find a 64-bit Git for Windows installer asset.' }
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installerPath
+            $installerProcess = Start-Process -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/NORESTART') -Wait -PassThru
+            if ($installerProcess.ExitCode -ne 0) {
+                Write-DeployLog "WARN: Git installer returned exit code $($installerProcess.ExitCode)."
+            }
+        }
+        finally {
+            Remove-Item -Path $installerPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Update-ProcessPathFromEnvironment
+    if (-not (Test-CommandAvailable 'git')) {
+        Write-DeployLog 'ERROR: Git could not be resolved after installation. Re-run in a fresh shell or install manually from https://git-scm.com/downloads'
+        exit 1
+    }
+    Write-DeployLog "Git ready: $(Get-ExecutableCommandPath (Get-Command git))"
+}
+
 function Get-TerraformArch {
     if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { return 'arm64' }
     return 'amd64'
@@ -219,6 +294,62 @@ function Install-TerraformIfMissing {
     Write-DeployLog "Terraform ready: $(Get-ExecutableCommandPath (Get-Command terraform))"
 }
 
+function Test-InfraCheckoutPresent {
+    param([Parameter(Mandatory)][string]$Path)
+    return (Test-Path (Join-Path $Path 'main.tf') -PathType Leaf) -and (Test-Path (Join-Path $Path 'backend.tf') -PathType Leaf)
+}
+
+# `deploy` must work when this script is downloaded standalone (e.g. via
+# raw.githubusercontent.com, no repo clone) -- self-clone the repo with Git so
+# the rest of infra/ (main.tf, modules/, etc.) is available to run Terraform
+# against. Every other command keeps assuming $PSScriptRoot is a real
+# checkout, unchanged.
+function Resolve-InfraDir {
+    param([Parameter(Mandatory)][string]$Ref)
+
+    if (Test-InfraCheckoutPresent -Path $PSScriptRoot) {
+        return $PSScriptRoot
+    }
+
+    Write-DeployLog 'Standalone script detected (no infra/ checkout next to deploy-terraform.ps1); self-bootstrapping one with Git...'
+    Install-GitIfMissing
+
+    $repoUrl = 'https://github.com/bcgov/action-deployer-vm-bastion-alz.git'
+    $cacheRoot = Join-Path $env:LOCALAPPDATA 'bcgov\action-deployer-vm-bastion-alz'
+    $repoDir = Join-Path $cacheRoot $Ref
+    $isNewCheckout = -not (Test-Path (Join-Path $repoDir '.git') -PathType Container)
+
+    if ($isNewCheckout) {
+        Write-DeployLog "Cloning $repoUrl (ref: $Ref) into $repoDir..."
+        New-Item -ItemType Directory -Force -Path $repoDir | Out-Null
+    }
+    else {
+        Write-DeployLog "Updating cached checkout ($repoDir, ref: $Ref)..."
+    }
+
+    Push-Location $repoDir
+    try {
+        if ($isNewCheckout) {
+            Invoke-Native -FilePath 'git' -ArgumentList @('init', '-q')
+            Invoke-Native -FilePath 'git' -ArgumentList @('remote', 'add', 'origin', $repoUrl)
+        }
+        Invoke-Native -FilePath 'git' -ArgumentList @('fetch', '--depth', '1', 'origin', $Ref)
+        Invoke-Native -FilePath 'git' -ArgumentList @('checkout', '--force', 'FETCH_HEAD')
+    }
+    finally {
+        Pop-Location
+    }
+
+    $resolvedInfraDir = Join-Path $repoDir 'infra'
+    if (-not (Test-InfraCheckoutPresent -Path $resolvedInfraDir)) {
+        Write-DeployLog "ERROR: checkout at $repoDir does not contain the expected infra/ Terraform files (ref: $Ref)."
+        exit 1
+    }
+
+    Write-DeployLog "Standalone mode: using self-bootstrapped checkout at $resolvedInfraDir"
+    return $resolvedInfraDir
+}
+
 function Confirm-AzureLogin {
     $null = az account show 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -238,6 +369,27 @@ function Get-TfvarsSubscriptionId {
     $match = Select-String -Path $TfvarsFile -Pattern '^\s*subscription_id\s*=\s*"([^"]*)"' | Select-Object -First 1
     if ($match) { return $match.Matches[0].Groups[1].Value }
     return ''
+}
+
+# -TfvarsPath can point anywhere on disk, not just infra/terraform.tfvars --
+# needed for `deploy`, honored by every command. Omit it to keep today's
+# default (infra/terraform.tfvars) unchanged.
+function Resolve-TfvarsPath {
+    param([string]$Explicit)
+
+    if ($Explicit) {
+        $candidate = $Explicit
+        if (-not [System.IO.Path]::IsPathRooted($candidate)) {
+            $candidate = Join-Path (Get-Location) $candidate
+        }
+        if (-not (Test-Path $candidate -PathType Leaf)) {
+            Write-DeployLog "ERROR: -TfvarsPath '$Explicit' was not found. Create one first: copy examples/local.tfvars from the repo (or download it directly: https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/examples/local.tfvars), fill in every REPLACE_ME value, then re-run with -TfvarsPath pointing at your copy."
+            exit 1
+        }
+        return (Resolve-Path -Path $candidate).ProviderPath
+    }
+
+    return (Join-Path $InfraDir 'terraform.tfvars')
 }
 
 function Set-AzureAuth {
@@ -268,11 +420,31 @@ function Set-AzureAuth {
     }
 }
 
+function Test-TfvarsNoPlaceholder {
+    param([Parameter(Mandatory)][string]$Path)
+
+    # Find non-comment lines that still contain the REPLACE_ME sentinel value.
+    # Catches string values ("REPLACE_ME"), list items (["REPLACE_ME"]), and
+    # anything in between -- before any Azure or Terraform call is made.
+    $offending = Get-Content -Path $Path |
+    Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'REPLACE_ME' }
+
+    if (-not $offending) { return }
+
+    Write-DeployLog "ERROR: $($offending.Count) value(s) in '$Path' still contain the REPLACE_ME placeholder. Replace them with real values before deploying:"
+    foreach ($line in $offending) {
+        Write-DeployLog "  $($line.Trim())"
+    }
+    Write-DeployLog "See README.md -> 'Local tfvars fields' for where to find each value."
+    exit 1
+}
+
 function Set-VariablesSource {
     if (Test-Path $TfvarsFile) {
         $script:UseTfvars = $true
         $script:TfvarsArgs = @("-var-file=$TfvarsFile")
         Write-DeployLog 'Using terraform.tfvars'
+        Test-TfvarsNoPlaceholder -Path $TfvarsFile
         return
     }
 
@@ -291,21 +463,29 @@ function Set-VariablesSource {
 }
 
 function Invoke-TfInit {
-    param([string[]]$ExtraArgs = @())
+    param(
+        [string[]]$ExtraArgs = @(),
+        [ValidateSet('azurerm', 'local')][string]$BackendMode = 'azurerm'
+    )
 
-    Write-DeployLog "Initializing Terraform (backend: ${BackendStorageAccount}/${BackendContainerName}/${BackendStateKey})"
     Push-Location $InfraDir
     try {
-        $useOidcFlag = if ($env:ARM_USE_OIDC) { $env:ARM_USE_OIDC } else { 'false' }
         $initArgs = @('init', '-upgrade')
         if (Test-CiMode) { $initArgs += '-input=false' }
-        $initArgs += @(
-            "-backend-config=resource_group_name=$BackendResourceGroup",
-            "-backend-config=storage_account_name=$BackendStorageAccount",
-            "-backend-config=container_name=$BackendContainerName",
-            "-backend-config=key=$BackendStateKey",
-            "-backend-config=use_oidc=$useOidcFlag"
-        )
+        if ($BackendMode -eq 'azurerm') {
+            Write-DeployLog "Initializing Terraform (backend: ${BackendStorageAccount}/${BackendContainerName}/${BackendStateKey})"
+            $useOidcFlag = if ($env:ARM_USE_OIDC) { $env:ARM_USE_OIDC } else { 'false' }
+            $initArgs += @(
+                "-backend-config=resource_group_name=$BackendResourceGroup",
+                "-backend-config=storage_account_name=$BackendStorageAccount",
+                "-backend-config=container_name=$BackendContainerName",
+                "-backend-config=key=$BackendStateKey",
+                "-backend-config=use_oidc=$useOidcFlag"
+            )
+        }
+        else {
+            Write-DeployLog 'Initializing Terraform (backend: local state file, infra/terraform.tfstate -- not shared, this machine only)'
+        }
         $initArgs += $ExtraArgs
         Invoke-Native -FilePath 'terraform' -ArgumentList $initArgs
     }
@@ -356,6 +536,86 @@ function Invoke-TfApply {
     }
 }
 
+function Resolve-BackendMode {
+    # deploy only: azurerm when all required BACKEND_* env vars are set (same
+    # remote state CI uses), otherwise fall back to local Terraform state so
+    # `deploy` never hard-fails just because no shared backend was configured.
+    $hasRemoteConfig = [bool]($BackendResourceGroup -and $BackendStorageAccount -and $BackendStateKey)
+    if ($hasRemoteConfig) { return 'azurerm' }
+
+    Write-DeployLog 'WARN: BACKEND_* environment variables are not fully set -- falling back to LOCAL Terraform state (infra/terraform.tfstate).'
+    Write-DeployLog 'WARN: Local state lives only on this machine and is NOT shared. Do not use this mode for team/shared deployments -- set BACKEND_RESOURCE_GROUP, BACKEND_STORAGE_ACCOUNT, and BACKEND_STATE_KEY to use the shared azurerm backend instead.'
+    return 'local'
+}
+
+function Set-LocalBackendOverride {
+    param(
+        [Parameter(Mandatory)][string]$InfraPath,
+        [Parameter(Mandatory)][ValidateSet('azurerm', 'local')][string]$BackendMode
+    )
+
+    $overridePath = Join-Path $InfraPath 'local_backend_override.tf'
+    if ($BackendMode -eq 'local') {
+        Set-Content -Path $overridePath -Encoding utf8 -Value @'
+# Generated by deploy-terraform.ps1 (no BACKEND_* env vars set) -- overrides
+# backend.tf's `backend "azurerm" {}` with local state for this machine only.
+# Safe to delete; git-ignored; regenerated automatically on the next `deploy`.
+terraform {
+  backend "local" {}
+}
+'@
+    }
+    else {
+        Remove-Item -Path $overridePath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-DeployBackendModeMarkerPath {
+    return (Join-Path $InfraDir '.deploy-backend-mode')
+}
+
+function Test-BackendModeChanged {
+    param([Parameter(Mandatory)][string]$CurrentMode)
+
+    $markerPath = Get-DeployBackendModeMarkerPath
+    if (-not (Test-Path $markerPath -PathType Leaf)) { return $false }
+    $previousMode = Get-Content -Path $markerPath -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $previousMode) { return $false }
+    return ($previousMode.Trim() -ne '') -and ($previousMode.Trim() -ne $CurrentMode)
+}
+
+function Set-DeployBackendModeMarker {
+    param([Parameter(Mandatory)][string]$BackendMode)
+    Set-Content -Path (Get-DeployBackendModeMarkerPath) -Value $BackendMode -Encoding utf8 -NoNewline
+}
+
+function Invoke-TfDeploy {
+    param([string[]]$ExtraArgs = @())
+
+    $backendMode = Resolve-BackendMode
+    Set-LocalBackendOverride -InfraPath $InfraDir -BackendMode $backendMode
+
+    $initExtraArgs = @()
+    if (Test-BackendModeChanged -CurrentMode $backendMode) {
+        Write-DeployLog 'Backend mode changed since the last deploy in this infra directory; re-initializing with -reconfigure.'
+        $initExtraArgs += '-reconfigure'
+    }
+
+    Push-Location $InfraDir
+    try {
+        Invoke-TfInit -ExtraArgs $initExtraArgs -BackendMode $backendMode
+        Set-DeployBackendModeMarker -BackendMode $backendMode
+
+        $applyArgs = @('apply') + $script:TfvarsArgs + $ExtraArgs
+        Invoke-Native -FilePath 'terraform' -ArgumentList $applyArgs
+        Write-DeployLog 'Deploy complete; outputs:'
+        terraform output
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 function Invoke-TfDestroy {
     param([string[]]$ExtraArgs = @())
 
@@ -384,6 +644,11 @@ function Invoke-TfDestroy {
 function Invoke-Main {
     if (Test-CiMode) { Write-DeployLog 'Running in CI mode (auto-approve enabled)' }
 
+    if ($Command -eq 'deploy') {
+        $script:InfraDir = Resolve-InfraDir -Ref $Ref
+    }
+    $script:TfvarsFile = Resolve-TfvarsPath -Explicit $TfvarsPath
+
     Install-TerraformIfMissing
 
     switch ($Command) {
@@ -402,6 +667,7 @@ function Invoke-Main {
             'init' { Invoke-TfInit -ExtraArgs $RemainingArgs }
             'plan' { Invoke-TfPlan -ExtraArgs $RemainingArgs }
             'apply' { Invoke-TfApply -ExtraArgs $RemainingArgs }
+            'deploy' { Invoke-TfDeploy -ExtraArgs $RemainingArgs }
             'destroy' { Invoke-TfDestroy -ExtraArgs $RemainingArgs }
             'validate' { Invoke-Native -FilePath 'terraform' -ArgumentList (@('validate') + $RemainingArgs) }
             'fmt' { Invoke-Native -FilePath 'terraform' -ArgumentList (@('fmt', '-recursive') + $RemainingArgs) }

@@ -1,36 +1,45 @@
 # action-deployer-vm-bastion-alz
 
-A reusable **GitHub composite Action** that deploys an **Azure Bastion + Linux
-jumpbox** into the BC Gov Azure Landing Zone, following ALZ policy and security
-best practices (OIDC auth, no public IPs on the VM, no SSH keys, Entra ID + MFA
-login).
+A GitHub composite Action that provisions **Azure Bastion + a Linux jumpbox** in your BC Gov Azure Landing Zone namespace — no VPN, no public IPs, no SSH keys. Entra ID with MFA, enforced by Azure RBAC.
 
-The Terraform that builds the Bastion, jumpbox, RBAC, schedules, monitoring and
-Bastion automation is **bundled in this repo** under [`infra/`](infra/). Consuming
-teams do not copy any Terraform: they add the action as a step, pass a few inputs
-(or a `.tfvars` file), and the deployment lands in **their** subscription /
-namespace.
+The Terraform is bundled in this repo. Your team adds the action as a step, passes a few inputs (or a `.tfvars` file), and the stack lands in your subscription. No Terraform to copy or maintain.
 
-## ⚠️ One Bastion per VNet
+## Table of contents
 
-Azure enforces two hard constraints that matter when multiple namespaces share a
-spoke VNet:
+- [⚠️ One Bastion per VNet](#one-bastion-per-vnet)
+- [How it works](#how-it-works)
+- [Quick start](#quick-start)
+  - [Initial setup (one-time, per environment)](#initial-setup-one-time-per-environment)
+  - [Wire up the workflow](#wire-up-the-workflow)
+- [Configuration: tfvars + override inputs](#configuration-tfvars--override-inputs)
+- [Network configuration](#network-configuration)
+- [Inputs](#inputs)
+- [Jumpbox access (VM Admin Login)](#jumpbox-access-vm-admin-login)
+- [Operations](#operations)
+- [What gets deployed](#what-gets-deployed)
+- [VM image and placement](#vm-image-and-placement)
+- [Start/stop schedules](#startstop-schedules)
+- [Bastion session options](#bastion-session-options)
+- [Monitoring (optional Log Analytics)](#monitoring-optional-log-analytics)
+- [Repository structure](#repository-structure)
+- [Admin setup (this repo)](#admin-setup-this-repo)
+- [Local deployment](#local-deployment)
+  - [One-step local deploy](#one-step-local-deploy)
+  - [Prerequisites](#prerequisites)
+  - [Required Azure permissions](#required-azure-permissions)
+  - [Step-by-step local deployment](#step-by-step-local-deployment)
+  - [Local vs GHA differences](#local-vs-gha-differences)
+  - [Local tfvars fields](#local-tfvars-fields)
+  - [Useful local commands](#useful-local-commands)
 
-**1. `AzureBastionSubnet` is a VNet-level singleton.**
-A VNet can have only one subnet named `AzureBastionSubnet`, and Azure Bastion
-requires exactly that name. This deployer always creates it. If another namespace
-already owns `AzureBastionSubnet` in the target VNet, the deploy will fail — there
-is no workaround short of using a separate spoke VNet.
+<!-- markdownlint-disable-next-line MD033 -->
+## <a id="one-bastion-per-vnet"></a>⚠️ One Bastion per VNet
 
-> **In the BC Gov ALZ pattern each license plate gets its own spoke VNet**, so this
-> is normally not an issue. It only arises if two license plates are deliberately
-> sharing a single spoke.
+Two hard constraints apply when multiple namespaces share a spoke VNet:
 
-**2. Jumpbox subnet names must be unique per VNet.**
-The `jumpbox_subnet_name` input defaults to `jumpbox-subnet`. If another namespace
-has already claimed that name in the same VNet, Terraform will attempt to modify the
-existing subnet and Azure will block it. Always override this to something
-namespace-specific:
+**1. Only one `AzureBastionSubnet` per VNet.** Azure Bastion requires that exact subnet name, and a VNet can only have one. This deployer always creates it. If another namespace already owns it in the same VNet, the deploy fails — the only fix is a separate spoke VNet. (In BC Gov ALZ, each license plate gets its own VNet, so this is rarely an issue.)
+
+**2. Jumpbox subnet names must be unique per VNet.** The default is `jumpbox-subnet`. If another namespace already claimed that name, override it:
 
 ```yaml
 # In the caller workflow:
@@ -57,23 +66,13 @@ flowchart LR
   tf --> az["Azure: Bastion + jumpbox<br/>in your namespace"]
 ```
 
-Your job checks out your repo (so the action can read your `tfvars_file`) and adds
-the action as a step. The bundled `infra/` ships with the action at the exact
-`@ref` you pin — no second checkout. Because the step runs inside **your job**,
-the job's `environment:` and OIDC `id-token` permission apply directly, and the
-environment-scoped secrets you pass as inputs resolve normally. It then runs OIDC
-login and the bundled `deploy-terraform.sh` against an `azurerm` remote-state
-backend you own.
+Your job checks out your repo so the action can read your `tfvars_file`, then runs the action as a step. The bundled `infra/` ships at the exact `@ref` you pin — no second checkout needed. The step inherits your job's `environment:` and `id-token` permission, so environment-scoped secrets resolve normally. It logs in with OIDC and runs `deploy-terraform.sh` against a remote state backend in your subscription.
 
 ## Quick start
 
 ### Initial setup (one-time, per environment)
 
-Before the workflow can authenticate, run the BC Gov Azure Landing Zone OIDC
-bootstrap **in your own repo/subscription**. It creates a user-assigned managed
-identity, an **environment-scoped** OIDC federated credential, the Terraform
-state storage account, and (optionally) the GitHub Environment plus its secrets
-and the `STORAGE_ACCOUNT_NAME` variable:
+Run the BC Gov ALZ OIDC bootstrap **once per environment** in your own repo/subscription. It creates the managed identity, OIDC federated credential, Terraform state storage account, and (optionally) the GitHub Environment with secrets and the `STORAGE_ACCOUNT_NAME` variable:
 
 ```bash
 curl -sSLO https://raw.githubusercontent.com/bcgov/quickstart-azure-containers/refs/heads/main/initial-azure-setup.sh
@@ -84,18 +83,13 @@ chmod +x initial-azure-setup.sh
   -r "bcgov/my-app" -e "dev" --create-storage --create-github-secrets --dry-run
 ```
 
-What it sets up for each environment:
+What it creates:
 
-- **OIDC federated credential** with subject `repo:<owner>/<repo>:environment:<env>` —
-  i.e. it only trusts a job running in that **GitHub Environment**.
-- **Environment secrets**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
-  `VNET_NAME`, `VNET_RESOURCE_GROUP_NAME`.
-- **Environment variable**: `STORAGE_ACCOUNT_NAME` (the Terraform state account).
+- **OIDC federated credential** scoped to `repo:<owner>/<repo>:environment:<env>` — only jobs running in that GitHub Environment can authenticate.
+- **Environment secrets**: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `VNET_NAME`, `VNET_RESOURCE_GROUP_NAME`.
+- **Environment variable**: `STORAGE_ACCOUNT_NAME` (the Terraform state storage account).
 
-> **You still add manually** (the bootstrap does not create these): `VNET_ADDRESS_SPACE`,
-> `BASTION_SUBNET_ADDRESS_PREFIX`, `JUMPBOX_SUBNET_ADDRESS_PREFIX`, and
-> `VM_ADMIN_LOGIN_PRINCIPAL_IDS` — all four are **required** secrets. Add them to the
-> **same GitHub Environment**.
+> **Add these four secrets manually** — the bootstrap doesn't create them: `VNET_ADDRESS_SPACE`, `BASTION_SUBNET_ADDRESS_PREFIX`, `JUMPBOX_SUBNET_ADDRESS_PREFIX`, and `VM_ADMIN_LOGIN_PRINCIPAL_IDS`. All four are required. Add them to the same GitHub Environment.
 
 ### Wire up the workflow
 
@@ -138,44 +132,22 @@ jobs:
           vm_admin_login_principal_ids: ${{ secrets.VM_ADMIN_LOGIN_PRINCIPAL_IDS }}
 ```
 
-> **The job owns environment + OIDC.** Set `environment:` on the **job** (not the
-> action) so environment-scoped secrets/variables resolve and OIDC trusts the
-> job, and grant `permissions: id-token: write`. Secret values passed as `with:`
-> inputs are still masked in logs.
-
-> **Pin a version.** Reference the action with a tag or commit SHA
-> (`...@v1`). The bundled `infra/` ships with the action at that exact ref, so the
-> Terraform always matches the version you pinned.
+> **`environment:` goes on the job, not the action.** That's what enables OIDC trust and environment-scoped secrets. Grant `permissions: id-token: write` on the job too. Secret values passed as `with:` inputs are masked in logs.
+>
+> **Pin a version** with a tag or SHA (`...@v1`). The bundled Terraform ships at that exact ref, so plan and apply always use consistent code.
 
 Once infrastructure is deployed, see the [SOCKS proxy consumer guide](bastion-consumer-scripts/bastion-proxy.md) for instructions on connecting to the private network without a VPN.
 
 ## Configuration: tfvars + override inputs
 
-You can configure the deployment two ways, and combine them:
+Two ways to configure a deployment — mix and match:
 
-- **`tfvars_file`** — a `.tfvars` file in your repo. Your job runs
-  `actions/checkout`, and the action reads the file from the checked-out
-  workspace at this path (relative to your repo root, e.g.
-  `config/my-app.tfvars`). It is staged as the base config; the action fails with
-  a clear hint if the path is missing (usually a forgotten checkout).
-- **Override inputs** — discrete action inputs (`location`, `vm_size`, `bastion_sku`,
-  `enable_bastion`, `enable_jumpbox`, `enable_bastion_automation`, `os_disk_size_gb`).
+- **`tfvars_file`** — a `.tfvars` file in your checked-out repo (e.g. `config/my-app.tfvars`). The base config. The action fails clearly if the path doesn't exist, usually because `actions/checkout` is missing.
+- **Override inputs** — a small set of common knobs: `location`, `vm_size`, `bastion_sku`, `enable_bastion`, `enable_jumpbox`, `enable_bastion_automation`, `os_disk_size_gb`. These always win over the same key in your tfvars.
 
-Precedence (highest wins):
+Precedence: `override inputs > tfvars_file > TF_VAR_* defaults`
 
-```
-override inputs (-var)  >  tfvars_file  >  secret-backed TF_VAR_* defaults
-```
-
-So an override input always wins over the same key in your tfvars file.
-
-> **Prefer a `tfvars_file` for anything beyond the basics.** The action inputs are
-> a deliberately small set of the most common knobs. The **full** set of tunables
-> lives in [`infra/variables.tf`](infra/variables.tf) and is reachable **only**
-> through `tfvars_file`. Some knobs — notably all **start/stop schedule** timing
-> (see [Start/stop schedules](#startstop-schedules)) — have **no action input at
-> all** and can only be set in tfvars. Rule of thumb: use action inputs for the
-> handful of common overrides; put everything else in your `tfvars_file`.
+For anything beyond the basics, use `tfvars_file`. The action inputs cover only the most common settings — the full variable set lives in [`infra/variables.tf`](infra/variables.tf) and is only reachable through tfvars. Schedule timing, for example, has no action input at all.
 
 ## Network configuration
 
@@ -184,7 +156,7 @@ platform team): a jumpbox subnet and `AzureBastionSubnet`. Both are always creat
 `enable_bastion: false` skips the Bastion host resource but not the subnet.
 
 | Variable | Required | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `vnet_name` | yes (secret) | Existing spoke VNet. |
 | `vnet_resource_group_name` | yes (secret) | Resource group of the VNet. |
 | `vnet_address_space` | yes (secret) | CIDR of the VNet. |
@@ -193,14 +165,7 @@ platform team): a jumpbox subnet and `AzureBastionSubnet`. Both are always creat
 | `bastion_subnet_name` | no | Must stay `AzureBastionSubnet` (Azure requirement). |
 | `jumpbox_subnet_name` | no | Defaults to `jumpbox-subnet`. **Set a unique value per namespace.** |
 
-> **Validation.** Terraform rejects the deploy if `bastion_subnet_address_prefix`
-> is smaller than /26 (Azure Bastion requires at least a /26), if any subnet/VNet
-> value is not a valid CIDR, or if `bastion_subnet_name` is changed away from
-> `AzureBastionSubnet`. It also cross-checks against the VNet Azure actually
-> returns: `vnet_address_space` must match one of the VNet's real address
-> spaces, and both subnet prefixes must be contained within it — catching a
-> stale secret or an out-of-range subnet CIDR in `plan` instead of a later
-> Azure API error.
+> **Validation.** Terraform checks that `bastion_subnet_address_prefix` is /26 or larger, all CIDRs are valid, `bastion_subnet_name` stays `AzureBastionSubnet`, and both subnet prefixes fit inside `vnet_address_space` as Azure reports it. Stale secrets and out-of-range CIDRs fail at `plan`, not mid-apply.
 
 ## Inputs
 
@@ -210,7 +175,7 @@ logs); `backend_storage_account` typically comes from the `STORAGE_ACCOUNT_NAME`
 variable created by the bootstrap.
 
 | Input | Required | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `app_name` | yes | — | Application name; used for resource naming and the state key. |
 | `app_env` | yes | — | Environment (e.g. `tools`, `dev`, `test`, `prod`). |
 | `terraform_command` | no | `apply` | `apply`, `plan`, or `destroy`. |
@@ -240,21 +205,14 @@ variable created by the bootstrap.
 | `jumpbox_subnet_address_prefix` | yes | — | CIDR for the jumpbox subnet (e.g. `10.46.115.128/28`). Pass from a secret. |
 | `vm_admin_login_principal_ids` | yes | — | Comma-separated Entra object IDs (users/groups) for jumpbox login. Pass from a secret. See [Jumpbox access](#jumpbox-access-vm-admin-login). |
 
-> **Network details are secrets by design.** `vnet_name`, `vnet_resource_group_name`,
-> `vnet_address_space`, `bastion_subnet_address_prefix`, and `jumpbox_subnet_address_prefix`
-> are required and should be passed from secrets, never as plain literals or committed
-> tfvars. This keeps VNet names and IP ranges out of workflow logs, PRs, and committed
-> config, and puts the responsibility on the calling team to supply (and safeguard) their
-> own network information.
+> **Network inputs should come from secrets**, not committed config. Pass VNet names and CIDRs from GitHub Environment secrets — keep them out of workflow files and committed tfvars.
 
 ### Secrets created by the bootstrap
 
-The [initial setup](#initial-setup-one-time-per-environment) script creates these
-as **environment** secrets/variables; map them into the action inputs as shown in
-the caller example:
+The [initial setup](#initial-setup-one-time-per-environment) script creates these as environment secrets/variables. Map them to action inputs as shown in the caller example:
 
 | GitHub item | Kind | Created by bootstrap | Maps to input |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `AZURE_CLIENT_ID` | secret | yes | `azure_client_id` |
 | `AZURE_TENANT_ID` | secret | yes | `azure_tenant_id` |
 | `AZURE_SUBSCRIPTION_ID` | secret | yes | `azure_subscription_id` |
@@ -268,20 +226,9 @@ the caller example:
 
 ## Jumpbox access (VM Admin Login)
 
-Entra-SSH access to the jumpbox is gated by Azure RBAC: the deployer assigns the
-**Virtual Machine Administrator Login** role to every principal you list in the
-`VM_ADMIN_LOGIN_PRINCIPAL_IDS` secret. This is **required** — with an empty list
-the role is never assigned and **nobody can log in**, which makes the entire
-Bastion + jumpbox path unusable. The deployer fails fast if the secret is empty
-or contains a value that is not an object ID.
+Access to the jumpbox is gated by Azure RBAC. The deployer assigns the **Virtual Machine Administrator Login** role to every principal in `VM_ADMIN_LOGIN_PRINCIPAL_IDS`. This is required — an empty list means nobody can log in. The action fails fast rather than deploying an inaccessible jumpbox.
 
-Format of the `VM_ADMIN_LOGIN_PRINCIPAL_IDS` secret:
-
-- A **comma-separated** string — no brackets, no quotes, e.g.
-  `11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222`.
-- Each value is an Entra **object ID (GUID)** for a **user** or a **group**.
-  A group is recommended so you manage who has access in Entra, not in CI.
-- Use object IDs, **not** UPNs, emails, or display names — those are rejected.
+`VM_ADMIN_LOGIN_PRINCIPAL_IDS` is a **comma-separated string of Entra object IDs** (GUIDs) — users and/or groups, no brackets, no quotes. Use a group so you manage access in Entra, not in CI. Object IDs only — UPNs, emails, and display names are rejected.
 
 Find object IDs with the Azure CLI:
 
@@ -296,7 +243,7 @@ az ad group show --group "My Team Jumpbox Admins" --query id -o tsv
 Examples of the secret value:
 
 | Grant access to | `VM_ADMIN_LOGIN_PRINCIPAL_IDS` |
-|---|---|
+| --- | --- |
 | one group (recommended) | `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa` |
 | two users | `1111...-1111,2222...-2222` |
 | a group + a break-glass user | `aaaaaaaa-...,99999999-...` |
@@ -312,7 +259,7 @@ Set `terraform_command` to choose the operation:
 ## What gets deployed
 
 | Component | Purpose |
-|---|---|
+| --- | --- |
 | Azure Bastion (Standard) | Native client tunneling for AAD-authenticated SSH |
 | Ubuntu jumpbox VM | Minimal Linux host, no public IP, Entra SSH login |
 | RBAC assignments | VM Admin / User Login for configured Entra principals |
@@ -320,20 +267,14 @@ Set `terraform_command` to choose the operation:
 | Log Analytics workspace | **Optional** — created by default for the Bastion audit trail; BYO or disable (see below) |
 | Update Manager assessment | Patch compliance visibility |
 
-See [`infra/`](infra/) for the layout. The Bastion host and the jumpbox VM are
-provisioned via [Azure Verified Modules](https://aka.ms/avm) —
-`avm-res-network-bastionhost` (called from the root) and
-`avm-res-compute-virtualmachine` (called inside the `jumpbox` module). The local
-modules `network`, `jumpbox`, and `monitoring` wrap the subnets/NSGs, the
-Automation runbooks, and Log Analytics. See
-[`infra/variables.tf`](infra/variables.tf) for the full set of tunable variables.
+See [`infra/`](infra/) for the layout. The Bastion host and jumpbox VM are provisioned via [Azure Verified Modules](https://aka.ms/avm) (`avm-res-network-bastionhost` and `avm-res-compute-virtualmachine`). The local modules `network`, `jumpbox`, and `monitoring` wrap the subnets/NSGs, Automation runbooks, and Log Analytics. See [`infra/variables.tf`](infra/variables.tf) for the full variable set.
 
 ## VM image and placement
 
 Two more tfvars-only knobs control the jumpbox image and its zone placement:
 
 | Knob | Effect | Default |
-|---|---|---|
+| --- | --- | --- |
 | `vm_image` | Source image (`publisher`/`offer`/`sku`/`version`). Pin `version` for reproducible builds instead of `latest`. | latest Ubuntu 24.04 LTS server |
 | `availability_zone` | Pin the VM **and** Bastion to a zone (`"1"`/`"2"`/`"3"`) | `null` (non-zonal) |
 
@@ -347,18 +288,14 @@ vm_image = {
 availability_zone = "1"
 ```
 
-> **Changing either forces a replacement** — a new image version recreates the VM,
-> and a zone change recreates the VM (and the Bastion). Plan a maintenance window.
+> Changing either setting recreates the affected resources — a new image version recreates the VM, a zone change recreates both the VM and Bastion. Plan a maintenance window.
 
 ## Start/stop schedules
 
-To save cost the jumpbox is **deallocated overnight** and **restarted on a
-schedule**, and (optionally) Azure Bastion is **deleted after hours and
-recreated** the next working day. All of this timing is configurable — but
-**only via `tfvars_file`**. There are no action inputs for schedules.
+By default, the jumpbox deallocates overnight and restarts on a schedule. Optionally, Bastion can be deleted after hours and recreated the next working day to save cost. All timing is configurable through `tfvars_file` only — there are no action inputs for schedules.
 
 | Schedule | What it does | Default | Knob(s) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | VM auto-shutdown | Deallocates the jumpbox daily | 01:00 daily (UTC) | `vm_auto_shutdown_enabled`, `vm_auto_shutdown_time`, `vm_auto_shutdown_timezone`, `vm_auto_shutdown_notification` |
 | VM auto-start | Restarts the jumpbox on working days | 16:00 UTC, Mon–Fri | `vm_auto_start_time_utc`, `auto_start_week_days` |
 | Bastion recreate\* | Recreates Bastion on working days | 16:00 UTC, Mon–Fri | `bastion_create_time_utc`, `auto_start_week_days` |
@@ -366,17 +303,11 @@ recreated** the next working day. All of this timing is configurable — but
 
 \* Bastion delete/recreate only runs when `enable_bastion_automation = true`.
 
-- **VM auto-shutdown** uses Azure's DevTest schedule: `vm_auto_shutdown_time` is
-  24-hour `HHmm` (no colon) interpreted in `vm_auto_shutdown_timezone` — a
-  **Windows** time-zone ID such as `Pacific Standard Time`. Set
-  `vm_auto_shutdown_enabled = false` to keep the VM running.
-- **The automation schedules** (VM start, Bastion recreate/delete) are **UTC**;
-  give the time as `HH:MM:SS`. `auto_start_week_days` is shared by the VM-start
-  and Bastion-recreate schedules (full English weekday names).
-- **Pre-shutdown notification** (`vm_auto_shutdown_notification`) is off by
-  default. Set `enabled = true` with an `email` (semicolon-separated for multiple)
-  and/or a `webhook_url`, plus `minutes_before` (15–120), for a heads-up before
-  the VM deallocates.
+A few format notes:
+
+- **Auto-shutdown** (`vm_auto_shutdown_time`) uses 24-hour `HHmm` with no colon, in a **Windows** time-zone name like `Pacific Standard Time`. Set `vm_auto_shutdown_enabled = false` to disable.
+- **Automation schedules** (VM start, Bastion recreate/delete) use UTC in `HH:MM:SS` format. `auto_start_week_days` applies to both, using full English weekday names.
+- **Pre-shutdown notification** is off by default. Enable it with `vm_auto_shutdown_notification = { enabled = true, email = "you@example.com", minutes_before = 15 }`.
 
 Example — start later in the day, run Mon–Sat, and shut the VM down at 6 PM local:
 
@@ -391,12 +322,10 @@ vm_auto_shutdown_timezone = "Pacific Standard Time" # …local time
 
 ## Bastion session options
 
-Azure Bastion's session features are tfvars-only knobs (no action input). They
-apply to **both** the live Bastion and the one the automation runbook recreates,
-so the two always stay in sync:
+Azure Bastion's session features are tfvars-only knobs (no action input). They apply to **both** the live Bastion and the one the automation recreates, so the two stay in sync:
 
 | Knob | Effect | Default |
-|---|---|---|
+| --- | --- | --- |
 | `bastion_tunneling_enabled` | Native client tunneling (required for the SOCKS proxy) | `true` |
 | `bastion_copy_paste_enabled` | Clipboard copy/paste in sessions | `true` |
 | `bastion_file_copy_enabled` | File copy in sessions | `false` |
@@ -404,29 +333,19 @@ so the two always stay in sync:
 | `bastion_shareable_link_enabled` | Shareable session links | `false` |
 | `bastion_scale_units` | Bastion scale units (instances) | `2` |
 
-Tunneling, file copy, IP connect, and shareable links require the **Standard**
-(or Premium) SKU — the default `bastion_sku`. Leave `bastion_tunneling_enabled`
-on: the [bastion-proxy](bastion-consumer-scripts/bastion-proxy.md) workflow
-depends on it.
+Tunneling, file copy, IP connect, and shareable links require the **Standard** (or Premium) SKU — the default `bastion_sku`. Keep `bastion_tunneling_enabled` on: the [bastion-proxy](bastion-consumer-scripts/bastion-proxy.md) script depends on it.
 
 ## Monitoring (optional Log Analytics)
 
-The **only** consumer of the Log Analytics Workspace is the Bastion connection
-audit trail (the `BastionAuditLogs` diagnostic category — who connected through
-Bastion, to which VM, when). The jumpbox itself ships no monitoring agent. So the
-workspace exists purely for that audit trail, and is **not required** for Bastion
-or the jumpbox to function. There are three modes:
+The Log Analytics Workspace serves one purpose: the Bastion connection audit trail (`BastionAuditLogs` — who connected, to which VM, when). The jumpbox ships no monitoring agent. The workspace is optional — Bastion and the jumpbox work without it. Three modes:
 
 | Mode | Set | Result |
-|---|---|---|
+| --- | --- | --- |
 | **Create (default)** | nothing | A workspace `<app_name>-law` is created and receives Bastion audit logs. |
 | **Bring your own** | `existing_log_analytics_workspace_id` | No workspace is created; audit logs go to the workspace you pass. |
 | **Off** | `enable_monitoring = false` | No workspace and no Bastion diagnostic setting are created. |
 
-When a workspace is **created** (the default), three tfvars tune it:
-`log_analytics_retention_days` (default `30`), `log_analytics_sku` (default
-`PerGB2018`), and `log_analytics_daily_quota_gb` — a daily ingestion cap in GB,
-default `-1` (no cap). These don't apply to a BYO workspace.
+When a workspace is **created** (the default), three tfvars tune it: `log_analytics_retention_days` (default `30`), `log_analytics_sku` (default `PerGB2018`), and `log_analytics_daily_quota_gb` (daily ingestion cap in GB, default `-1` for no cap). These don't apply to a BYO workspace.
 
 BYO example (resource ID, **not** just the workspace GUID):
 
@@ -441,15 +360,9 @@ with:
   existing_log_analytics_workspace_id: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.OperationalInsights/workspaces/<name>
 ```
 
-> **Resource ID, not GUID.** Azure diagnostic settings need the full workspace
-> resource ID. Terraform validates the format and fails early if only a bare GUID
-> is supplied.
+> **Use the full resource ID, not just the GUID.** Terraform validates this and fails early if you supply only a GUID.
 >
-> **BYO needs RBAC, not a key.** The deploying OIDC identity must be able to write
-> a diagnostic setting targeting the workspace. If the BYO workspace is in another
-> resource group or subscription, grant that identity **Monitoring Contributor**
-> (or **Log Analytics Contributor**) on the workspace scope. No workspace shared
-> key is needed.
+> **BYO workspaces need RBAC, not a key.** Grant the deploying identity **Monitoring Contributor** (or **Log Analytics Contributor**) on the workspace scope if it's in a different resource group or subscription.
 
 ## Repository structure
 
@@ -505,10 +418,7 @@ REVIEW_COUNT=2 REQUIRED_CHECKS="terraform-validate,lint" \
 
 ## Local deployment
 
-The same Terraform orchestration that the composite action runs in CI is also available
-directly on a developer workstation — useful for ad-hoc deploys, one-off troubleshooting, or
-testing before wiring up CI. Both use Azure CLI authentication instead of OIDC and run
-identical Terraform commands:
+The same Terraform that CI runs is also available directly on a developer workstation — useful for ad-hoc deploys, troubleshooting, or testing before wiring up a workflow. Both scripts use Azure CLI auth instead of OIDC:
 
 - **`infra/deploy-terraform.sh`** (Bash) — macOS, Linux, Git Bash, or WSL2. Also the script CI runs.
 - **`infra/deploy-terraform.ps1`** (PowerShell) — native Windows, 5.1 (preinstalled) or 7+. No
@@ -516,20 +426,88 @@ identical Terraform commands:
 
 Every command below is shown for both; pick whichever matches your shell.
 
+### One-step local deploy
+
+`deploy-terraform.ps1 deploy` collapses the five manual steps below into one PowerShell
+command: it installs Terraform, the Azure CLI, and Git if any are missing, signs in to Azure
+if needed, then runs `terraform init` + `terraform apply` against a `terraform.tfvars` file
+that can live **anywhere on disk** — it does not have to be `infra/terraform.tfvars`.
+
+```powershell
+.\infra\deploy-terraform.ps1 deploy -TfvarsPath 'C:\path\to\my.tfvars' -Mode local
+```
+
+- **`-TfvarsPath`** points at your filled-in copy of [`examples/local.tfvars`](examples/local.tfvars) — anywhere on disk.
+- **`-Mode local`** is explicit and self-documenting (room for future modes later); it does not by itself force local Terraform state — see the backend note below.
+- **Backend**: if `BACKEND_RESOURCE_GROUP`, `BACKEND_STORAGE_ACCOUNT`, and `BACKEND_STATE_KEY` are all set, `deploy` uses the same shared `azurerm` backend as CI. If any are unset, it automatically falls back to **local Terraform state** (`infra/terraform.tfstate`, this machine only) and prints a warning — do not rely on the fallback for team/shared deployments.
+- Still just one confirmation prompt: `terraform apply`'s own interactive "yes" prompt. `deploy` never passes `-auto-approve`.
+
+#### No clone required — run directly from GitHub
+
+`deploy` also works when you download just this one script — no `git clone`, and Git does not
+need to be pre-installed: the script installs Git automatically (same as Terraform/Azure CLI
+above) and uses it to fetch the rest of the Terraform config it needs behind the scenes.
+**Run from an elevated ("Run as Administrator") PowerShell** — installing Terraform, the Azure
+CLI, or Git machine-wide can require it.
+
+Get a tfvars template first (also no clone needed):
+
+```powershell
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/examples/local.tfvars' -OutFile my.tfvars
+# Edit my.tfvars -- replace every REPLACE_ME placeholder
+```
+
+Then download and run `deploy-terraform.ps1` itself:
+
+```powershell
+# PowerShell 7 (pwsh) -- run as Administrator
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) 'deploy-terraform.ps1'
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/infra/deploy-terraform.ps1' -OutFile $tmp
+try {
+  pwsh -ExecutionPolicy Bypass -File $tmp deploy -TfvarsPath 'C:\path\to\my.tfvars' -Mode local
+}
+finally {
+  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+}
+```
+
+```powershell
+# Windows PowerShell 5.1 -- run as Administrator
+$tmp = Join-Path $env:TEMP 'deploy-terraform.ps1'
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/infra/deploy-terraform.ps1' -OutFile $tmp
+try {
+  powershell.exe -ExecutionPolicy Bypass -File $tmp deploy -TfvarsPath 'C:\path\to\my.tfvars' -Mode local
+}
+finally {
+  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+}
+```
+
+The first run clones the repo into `%LOCALAPPDATA%\bcgov\action-deployer-vm-bastion-alz\<ref>\`
+(Git required, installed automatically if missing). Later runs reuse that cached checkout —
+and, in local-state mode, its Terraform state — instead of cloning again. Add `-Ref v1` (a
+released tag or branch) to pin a specific version instead of tracking `main`.
+
+> **Why admin PowerShell?** WinGet/Chocolatey/direct-download installs of Terraform, the Azure
+> CLI, and Git can write to machine-wide locations (`Program Files`, the machine `PATH`), which
+> normally requires elevation. A non-elevated prompt still works if those tools are already
+> installed, or if your WinGet installs are scoped per-user.
+
 ### Prerequisites
 
 Install the following tools before running locally:
 
 | Tool | Minimum version | Install guide |
-|---|---|---|
+| --- | --- | --- |
 | [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | 2.65+ | See platform instructions below. **On Windows, `deploy-terraform.ps1` installs it automatically if missing** — manual install is optional. |
 | [Terraform](https://developer.hashicorp.com/terraform/install) | 1.12+ | See platform instructions below. **On Windows, `deploy-terraform.ps1` installs it automatically if missing** — manual install is optional. |
-| [Git](https://git-scm.com/downloads) | 2.x | Pre-installed on macOS/Linux |
+| [Git](https://git-scm.com/downloads) | 2.x | Pre-installed on macOS/Linux. **`deploy-terraform.ps1 deploy` installs it automatically if missing** when run standalone with no local checkout — manual install is optional in that case. Other commands assume you've already cloned the repo. |
 | A shell | — | macOS/Linux: **Bash 4.x+**. Windows: **PowerShell** (5.1+ preinstalled, or 7+) runs `deploy-terraform.ps1` natively; Git Bash/WSL2 are only needed if you'd rather run the `.sh` script. |
 
 > **Windows auto-install.** `infra/deploy-terraform.ps1` checks for Terraform and the Azure
-> CLI on every run and installs whichever is missing — via WinGet, falling back to
-> Chocolatey, falling back to a direct download (same pattern
+> CLI on every run (and Git too, for standalone `deploy` runs — see
+> [One-step local deploy](#one-step-local-deploy)) and installs whichever is missing — via
+> WinGet, falling back to Chocolatey, falling back to a direct download (same pattern
 > [`bastion-proxy.ps1`](bastion-consumer-scripts/bastion-proxy.ps1) already uses for the Azure
 > CLI). You can skip the manual installs below entirely and just run the script; it prints
 > what it's installing as it goes.
@@ -595,7 +573,7 @@ unzip tf.zip && sudo mv terraform /usr/local/bin/ && rm tf.zip
 Your user account needs the following RBAC roles on the target subscription:
 
 | Role | Scope | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | **Contributor** | Target subscription | Create resource group, VM, Bastion, Automation Account, etc. |
 | **User Access Administrator** | Target subscription | Assign RBAC roles (VM Admin Login) to Entra principals |
 | **Network Contributor** | VNet resource group | Create subnets in the existing spoke VNet |
@@ -604,7 +582,9 @@ Your user account needs the following RBAC roles on the target subscription:
 
 ### Step-by-step local deployment
 
-**1. Clone this repo at a specific version**
+Prefer a single command? See [One-step local deploy](#one-step-local-deploy) above — it automates all five steps into one call. The walkthrough below is the manual version, useful when you want more control or need to troubleshoot.
+
+#### 1. Clone this repo at a specific version
 
 ```bash
 git clone https://github.com/bcgov/action-deployer-vm-bastion-alz.git
@@ -612,7 +592,7 @@ cd action-deployer-vm-bastion-alz
 git checkout v1          # pin to a release tag: v1, v1.2.3, or a commit SHA
 ```
 
-**2. Log in to Azure**
+#### 2. Log in to Azure
 
 ```bash
 # Log in (optionally pass --tenant <tenant-id> to target a specific Entra tenant)
@@ -625,7 +605,7 @@ az account set --subscription "<your-subscription-id>"
 az account show --query "[name, id]" -o tsv
 ```
 
-**3. Create a local tfvars file**
+#### 3. Create a local tfvars file
 
 ```bash
 # macOS / Linux / Git Bash
@@ -641,7 +621,7 @@ Copy-Item examples/local.tfvars infra/terraform.tfvars
 
 `infra/terraform.tfvars` is git-ignored, so real subscription IDs, VNet names, and principal IDs will never be committed. See the [local vs GHA differences table](#local-vs-gha-differences) for what goes in each field.
 
-**4. Set backend environment variables**
+#### 4. Set backend environment variables
 
 ```bash
 # macOS / Linux / Git Bash
@@ -661,7 +641,7 @@ $env:BACKEND_STATE_KEY = "my-app/tools/terraform.tfstate"  # must match the key 
 
 Use the same storage account created by `initial-azure-setup.sh`. Sharing the backend with CI means local and CI deployments operate on the same state file.
 
-**5. Plan and apply**
+#### 5. Plan and apply
 
 ```bash
 # macOS / Linux / Git Bash
@@ -680,7 +660,7 @@ Use the same storage account created by `initial-azure-setup.sh`. Sharing the ba
 ### Local vs GHA differences
 
 | Concern | GitHub Actions | Local |
-|---|---|---|
+| --- | --- | --- |
 | **Authentication** | OIDC federated credential | Azure CLI (`az login`) |
 | `use_oidc` | `true` (default) | `false` — set in `infra/terraform.tfvars` |
 | `client_id` | Set from OIDC app registration | `""` — not needed for CLI auth |
@@ -689,14 +669,14 @@ Use the same storage account created by `initial-azure-setup.sh`. Sharing the ba
 | `common_tags` | JSON map injected as `TF_VAR_common_tags` env var | HCL map literal in tfvars |
 | `resource_group_name` | Defaults to `<app_name>-<app_env>` | Must be set explicitly in tfvars |
 | **Auto-approve** | Yes (`CI=true`) | No — script prompts `yes` before apply/destroy |
-| **State backend** | Set via action inputs | Set via `BACKEND_*` env vars |
+| **State backend** | Set via action inputs | Set via `BACKEND_*` env vars, or local state on this machine if unset (`deploy` command only — see [One-step local deploy](#one-step-local-deploy)) |
 
 ### Local tfvars fields
 
 The [`examples/local.tfvars`](examples/local.tfvars) template includes every required variable with a `REPLACE_ME` placeholder. Key fields that differ from [`examples/team.tfvars`](examples/team.tfvars):
 
 | Variable | Value for local | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `use_oidc` | `false` | Use CLI auth locally; `true` (default) in GHA |
 | `client_id` | `""` | Not needed for CLI auth |
 | `subscription_id` | Your subscription GUID | Same as `AZURE_SUBSCRIPTION_ID` secret in GHA |
@@ -710,7 +690,7 @@ The [`examples/local.tfvars`](examples/local.tfvars) template includes every req
 | `jumpbox_subnet_address_prefix` | Any valid CIDR | Same as `JUMPBOX_SUBNET_ADDRESS_PREFIX` secret |
 | `vm_admin_login_principal_ids` | `["guid1", "guid2"]` | HCL list, not comma-separated string |
 
-> **`vm_admin_login_principal_ids` format difference**: The GHA action's `run-deploy.sh` converts a comma-separated string to a Terraform `list(string)`. Locally, skip that conversion and write the list directly in the tfvars file:
+> **`vm_admin_login_principal_ids`**: GHA uses a comma-separated string (converted by `run-deploy.sh`). For local use, write it as an HCL list directly:
 >
 > ```hcl
 > vm_admin_login_principal_ids = ["11111111-1111-1111-1111-111111111111"]
