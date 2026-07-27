@@ -420,11 +420,31 @@ function Set-AzureAuth {
     }
 }
 
+function Test-TfvarsNoPlaceholder {
+    param([Parameter(Mandatory)][string]$Path)
+
+    # Find non-comment lines that still contain the REPLACE_ME sentinel value.
+    # Catches string values ("REPLACE_ME"), list items (["REPLACE_ME"]), and
+    # anything in between -- before any Azure or Terraform call is made.
+    $offending = Get-Content -Path $Path |
+    Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'REPLACE_ME' }
+
+    if (-not $offending) { return }
+
+    Write-DeployLog "ERROR: $($offending.Count) value(s) in '$Path' still contain the REPLACE_ME placeholder. Replace them with real values before deploying:"
+    foreach ($line in $offending) {
+        Write-DeployLog "  $($line.Trim())"
+    }
+    Write-DeployLog "See README.md -> 'Local tfvars fields' for where to find each value."
+    exit 1
+}
+
 function Set-VariablesSource {
     if (Test-Path $TfvarsFile) {
         $script:UseTfvars = $true
         $script:TfvarsArgs = @("-var-file=$TfvarsFile")
         Write-DeployLog 'Using terraform.tfvars'
+        Test-TfvarsNoPlaceholder -Path $TfvarsFile
         return
     }
 
