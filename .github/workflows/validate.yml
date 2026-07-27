@@ -68,17 +68,66 @@ jobs:
         shell: pwsh
         run: |
           Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
-          $scripts = @('infra/deploy-terraform.ps1', 'bastion-consumer-scripts/bastion-proxy.ps1')
+          $scripts = @(
+            'infra/deploy-terraform.ps1',
+            'infra/tests/deploy-terraform.tests.ps1',
+            'bastion-consumer-scripts/bastion-proxy.ps1'
+          )
           $results = $scripts | ForEach-Object { Invoke-ScriptAnalyzer -Path $_ -Severity Warning,Error -Settings ./PSScriptAnalyzerSettings.psd1 }
           $results | Format-Table -AutoSize
           if ($results) { throw "PSScriptAnalyzer found $($results.Count) issue(s)" }
+
+  # Behavioural tests for deploy-terraform.ps1, on both shells the README
+  # supports. Windows PowerShell 5.1 is not redundant with PowerShell 7 here:
+  # several defects this suite covers (redirected native stderr becoming a
+  # terminating error, the default TLS policy, two-argument Join-Path) reproduce
+  # only on 5.1 -- which is also the version preinstalled on every Windows box.
+  powershell-tests:
+    name: PowerShell tests (${{ matrix.name }})
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows PowerShell 5.1
+            exe: powershell.exe
+          - name: PowerShell 7
+            exe: pwsh.exe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # -IncludeInstall exercises the real download-and-install path: it
+      # resolves the current Terraform version from HashiCorp's checkpoint API,
+      # downloads the release zip and its SHA256SUMS, verifies the checksum,
+      # proves a tampered archive is rejected, extracts it, runs the binary, and
+      # drives Install-ToolIfMissing end-to-end with the package managers made
+      # unavailable so the direct-download fallback has to do the work.
+      # Nothing is installed machine-wide -- it all lands in a temp directory
+      # the suite removes on exit.
+      #
+      # The step always runs under pwsh and launches the target host itself:
+      # `shell:` is not one of the keys that accept the matrix context, so
+      # `shell: ${{ matrix.exe }}` fails with "Unrecognized named-value:
+      # 'matrix'". Passing the host through env (which does accept it) keeps
+      # both legs of the matrix and avoids interpolating into the run body.
+      - name: Run deploy-terraform tests
+        shell: pwsh
+        timeout-minutes: 15
+        env:
+          HOST_EXE: ${{ matrix.exe }}
+        run: |
+          & $env:HOST_EXE -NoProfile -ExecutionPolicy Bypass -File ./infra/tests/deploy-terraform.tests.ps1 -IncludeInstall
+          exit $LASTEXITCODE
 
   # Single aggregator — make only this job a required status check in branch
   # protection so renaming jobs above never requires editing the ruleset.
   results:
     name: Validate results
     if: always()
-    needs: [terraform, powershell]
+    needs: [terraform, powershell, powershell-tests]
     runs-on: ubuntu-24.04
     steps:
       - name: Check validate result
