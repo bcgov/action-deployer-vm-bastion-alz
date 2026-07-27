@@ -10,6 +10,12 @@
 # In GitHub Actions the values below are injected as TF_VAR_* environment
 # variables from GitHub Secrets. Locally they live in this tfvars file instead.
 #
+# Difference from examples/team.tfvars:
+#   team.tfvars contains only NON-SENSITIVE values (VM size, schedules, toggles).
+#   Secrets — subscription_id, tenant_id, VNet details, principal IDs — stay in
+#   GitHub Secrets in the team/CI flow. Here they live in this file because local
+#   runs authenticate via az login rather than OIDC, and this file is git-ignored.
+#
 # See README.md → "Local deployment" for the full step-by-step walkthrough.
 # =============================================================================
 
@@ -23,6 +29,9 @@ use_oidc  = false
 client_id = ""
 
 # Your target Azure subscription and the BC Gov tenant.
+# Portal: Subscriptions → select your subscription → Overview → "Subscription ID"
+#         Microsoft Entra ID → Overview → "Tenant ID" (also called Directory ID)
+# CLI:    az account show --query '{subscriptionId:id, tenantId:tenantId}' -o table
 subscription_id = "REPLACE_ME" # e.g. 00000000-0000-0000-0000-000000000000
 tenant_id       = "REPLACE_ME" # e.g. 00000000-0000-0000-0000-000000000000
 
@@ -52,6 +61,15 @@ common_tags = {
 # by the BC Gov platform team. Provide the same network details that you
 # would store as GitHub Secrets (VNET_NAME, VNET_RESOURCE_GROUP_NAME, etc.)
 # in the GHA workflow.
+#
+# Find all three VNet values in the Portal:
+#   Virtual networks → select your spoke VNet → Overview
+#     vnet_name                : resource name shown at the top of the page
+#     vnet_resource_group_name : "Resource group" field in the overview panel
+#     vnet_address_space       : Settings → Address space (the full VNet CIDR)
+# CLI:
+#   az network vnet show -n <name> -g <rg> \
+#     --query '{name:name, rg:resourceGroup, space:addressSpace.addressPrefixes}'
 vnet_name                = "REPLACE_ME" # Existing spoke VNet name
 vnet_resource_group_name = "REPLACE_ME" # Resource group that owns the VNet
 
@@ -60,6 +78,10 @@ vnet_address_space = "REPLACE_ME" # e.g. 10.46.115.0/24
 
 # Subnet CIDRs — must be within the VNet space and not already allocated.
 # AzureBastionSubnet must be /26 or larger (Azure hard requirement).
+# Check what’s already taken before choosing:
+#   Portal: Virtual networks → <your VNet> → Settings → Subnets
+#   CLI:    az network vnet subnet list -g <rg> --vnet-name <name> \
+#             --query '[].{name:name, prefix:addressPrefix}' -o table
 bastion_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.64/26  (must be /26 or larger)
 jumpbox_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.128/28
 
@@ -77,9 +99,17 @@ jumpbox_subnet_address_prefix = "REPLACE_ME" # e.g. 10.46.115.128/28
 # In GHA this comes from the VM_ADMIN_LOGIN_PRINCIPAL_IDS secret as a
 # comma-separated string (converted by run-deploy.sh). Locally it is a
 # Terraform list(string) of Entra object IDs (GUIDs), NOT UPNs or emails.
+# Prefer a group over individual users — manage membership in Entra, not here.
 #
-# Find a user's object ID:  az ad user show --id you@example.gov.bc.ca --query id -o tsv
-# Find a group's object ID: az ad group show --group "My Team" --query id -o tsv
+# Find a user’s object ID:
+#   Portal: Microsoft Entra ID → Users → search by name or email
+#           → select the user → Overview → "Object ID"
+#   CLI:    az ad user show --id you@example.gov.bc.ca --query id -o tsv
+#
+# Find a group’s object ID:
+#   Portal: Microsoft Entra ID → Groups → search by display name
+#           → select the group → Overview → "Object ID"
+#   CLI:    az ad group show --group "My Team" --query id -o tsv
 vm_admin_login_principal_ids = [
   "REPLACE_ME", # e.g. 11111111-1111-1111-1111-111111111111
 ]
