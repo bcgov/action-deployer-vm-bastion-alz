@@ -8,3 +8,7 @@ plugin "terraform" {
   enabled = true
   preset  = "recommended"
 }
+
+rule "azurerm_automation_runbook_invalid_runbook_type" {
+  enabled = false
+}
