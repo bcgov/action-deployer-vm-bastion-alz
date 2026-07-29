@@ -448,7 +448,7 @@ function Install-TerraformIfMissing {
 function Test-InfraCheckoutPresent {
     param([Parameter(Mandatory)][string]$Path)
     return (Test-Path -LiteralPath (Join-Path $Path 'main.tf') -PathType Leaf) -and
-        (Test-Path -LiteralPath (Join-Path $Path 'backend.tf') -PathType Leaf)
+    (Test-Path -LiteralPath (Join-Path $Path 'backend.tf') -PathType Leaf)
 }
 
 # The ref is passed to git and used as a directory name. Reject anything that
@@ -785,7 +785,7 @@ function Confirm-Initialized {
     Push-Location -LiteralPath $InfraDir
     try {
         $isInitialized = (Test-Path -LiteralPath '.terraform' -PathType Container) -and
-            (Test-Path -LiteralPath '.terraform.lock.hcl' -PathType Leaf)
+        (Test-Path -LiteralPath '.terraform.lock.hcl' -PathType Leaf)
         if (-not $isInitialized) { Invoke-TfInit }
     }
     finally {
@@ -799,6 +799,7 @@ function Invoke-TfPlan {
     Confirm-Initialized
     Push-Location -LiteralPath $InfraDir
     try {
+        Write-DeployLog 'Running terraform plan...'
         Invoke-Native -FilePath 'terraform' -ArgumentList (@('plan') + $script:TfvarsArgs + $ExtraArgs)
     }
     finally {

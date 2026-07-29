@@ -152,7 +152,7 @@ resource "azurerm_automation_runbook" "start_vm" {
   automation_account_name  = azurerm_automation_account.jumpbox.name
   log_verbose              = true
   log_progress             = true
-  runbook_type             = "Python3"
+  runbook_type             = "Python"
   runtime_environment_name = azapi_resource.python310.name
 
   content = templatefile("${path.module}/scripts/start_vm.py", {
@@ -179,7 +179,7 @@ resource "azurerm_automation_runbook" "create_bastion" {
   automation_account_name  = azurerm_automation_account.jumpbox.name
   log_verbose              = true
   log_progress             = true
-  runbook_type             = "Python3"
+  runbook_type             = "Python"
   runtime_environment_name = azapi_resource.python310.name
 
 
@@ -223,7 +223,7 @@ resource "azurerm_automation_runbook" "delete_bastion" {
   automation_account_name  = azurerm_automation_account.jumpbox.name
   log_verbose              = true
   log_progress             = true
-  runbook_type             = "Python3"
+  runbook_type             = "Python"
   runtime_environment_name = azapi_resource.python310.name
 
   content = templatefile("${path.module}/scripts/delete_bastion.py", {
