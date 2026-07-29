@@ -261,6 +261,52 @@ Assert-True -Name 'an absent marker reads as empty' -Condition ((Get-DeployBacke
 Assert-ExitCode -Name 'local override + BACKEND_* set is refused' -Case 'backend-override-conflict'
 Assert-ExitCode -Name 'no BACKEND_* and no override is refused with guidance' -Case 'backend-none-configured'
 
+$script:InfraDir = Join-Path $TestRoot 'local-destroy'
+$null = New-Item -ItemType Directory -Force -Path $script:InfraDir
+$localDestroyAccepted = $true
+try {
+    Confirm-BackendConsistency -BackendMode 'local' -AllowLocalStateForDestroy
+}
+catch {
+    $localDestroyAccepted = $false
+}
+Assert-True -Name 'destroy may fall back to local state without BACKEND_*' -Condition $localDestroyAccepted
+Assert-True -Name 'local destroy fallback creates the backend override' `
+    -Condition (Test-Path -LiteralPath (Get-LocalBackendOverridePath) -PathType Leaf)
+
+# A downloaded standalone script has no Terraform files beside it. Destroy must
+# therefore resolve the same cache path (keyed by -Ref) that deploy uses.
+$script:ResolvedDestroyRef = ''
+$script:DestroyAllowedLocalState = $false
+function Resolve-InfraDir {
+    param([string]$Ref)
+    $script:ResolvedDestroyRef = $Ref
+    return $TestRoot
+}
+function Resolve-TfvarsPath { param([string]$Explicit) return (Join-Path $TestRoot 'terraform.tfvars') }
+function Install-TerraformIfMissing { }
+function Install-AzureCliIfMissing { }
+function Confirm-AzureLogin { }
+function Set-AzureAuth { }
+function Set-VariablesSource { }
+function Resolve-BackendMode { param([switch]$Quiet) return 'local' }
+function Confirm-BackendConsistency {
+    param([string]$BackendMode, [switch]$AllowLocalStateForDestroy)
+    $script:DestroyAllowedLocalState = $AllowLocalStateForDestroy
+}
+function Invoke-TfDestroy { param([string[]]$ExtraArgs = @()) }
+
+$script:Command = 'destroy'
+$script:TfvarsPath = $null
+$script:Ref = 'v1'
+$script:RemainingArgs = @()
+$script:InfraDir = $TestRoot
+Invoke-Main
+Assert-True -Name 'standalone destroy resolves the same ref-keyed checkout as deploy' `
+    -Condition ($script:ResolvedDestroyRef -eq 'v1') -Detail $script:ResolvedDestroyRef
+Assert-True -Name 'standalone destroy keeps the local-state fallback enabled' `
+    -Condition $script:DestroyAllowedLocalState
+
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host 'Installer fallback chain (offline, synthetic methods)'
