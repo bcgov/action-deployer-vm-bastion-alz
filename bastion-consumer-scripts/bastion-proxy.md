@@ -44,29 +44,58 @@ These variants download the script to a temp file, execute it, then delete it. R
 **Bash:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/bastion-consumer-scripts/bastion-proxy.sh \
-  | bash -s -- \
-    --tenant         <tenant-id> \
-    --subscription   <subscription-id> \
-    --resource-group <resource-group> \
-    --bastion-name   <bastion-name> \
-    --vm-name        <vm-name> \
-    --port           8228
+# Tenant ID
+tenant_id='<tenant-id>'
+
+# Subscription ID
+subscription_id='<subscription-id>'
+
+# Resource group
+resource_group='<resource-group>'
+
+# Bastion host name
+bastion_name='<bastion-name>'
+
+# Jumpbox VM name
+vm_name='<vm-name>'
+
+# Local SOCKS5 port
+port=8228
+
+curl -fsSL https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/bastion-consumer-scripts/bastion-proxy.sh | bash -s -- --tenant "$tenant_id" --subscription "$subscription_id" --resource-group "$resource_group" --bastion-name "$bastion_name" --vm-name "$vm_name" --port "$port"
 ```
 
 **PowerShell 7:**
 
 ```powershell
+# Tenant ID
+$tenantId = '<tenant-id>'
+
+# Subscription ID
+$subscriptionId = '<subscription-id>'
+
+# Resource group
+$resourceGroup = '<resource-group>'
+
+# Bastion host name
+$bastionName = '<bastion-name>'
+
+# Jumpbox VM name
+$vmName = '<vm-name>'
+
+# Local SOCKS5 port
+$port = 8228
+
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) 'bastion-proxy.ps1'
 Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/bastion-consumer-scripts/bastion-proxy.ps1' -OutFile $tmp
 try {
   pwsh -ExecutionPolicy Bypass -File $tmp `
-    -TenantId       <tenant-id> `
-    -SubscriptionId <subscription-id> `
-    -ResourceGroup  <resource-group> `
-    -BastionName    <bastion-name> `
-    -VmName         <vm-name> `
-    -Port           8228
+    -TenantId       $tenantId `
+    -SubscriptionId $subscriptionId `
+    -ResourceGroup  $resourceGroup `
+    -BastionName    $bastionName `
+    -VmName         $vmName `
+    -Port           $port
 }
 finally {
   Remove-Item $tmp -Force -ErrorAction SilentlyContinue
@@ -76,16 +105,71 @@ finally {
 **Windows PowerShell 5.1:**
 
 ```powershell
+# Tenant ID
+$tenantId = '<tenant-id>'
+
+# Subscription ID
+$subscriptionId = '<subscription-id>'
+
+# Resource group
+$resourceGroup = '<resource-group>'
+
+# Bastion host name
+$bastionName = '<bastion-name>'
+
+# Jumpbox VM name
+$vmName = '<vm-name>'
+
+# Local SOCKS5 port
+$port = 8228
+
 $tmp = Join-Path $env:TEMP 'bastion-proxy.ps1'
 Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/bastion-consumer-scripts/bastion-proxy.ps1' -OutFile $tmp
 try {
   powershell.exe -ExecutionPolicy Bypass -File $tmp `
-    -TenantId       <tenant-id> `
-    -SubscriptionId <subscription-id> `
-    -ResourceGroup  <resource-group> `
-    -BastionName    <bastion-name> `
-    -VmName         <vm-name> `
-    -Port           8228
+    -TenantId       $tenantId `
+    -SubscriptionId $subscriptionId `
+    -ResourceGroup  $resourceGroup `
+    -BastionName    $bastionName `
+    -VmName         $vmName `
+    -Port           $port
+}
+finally {
+  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+}
+```
+
+**Example - Windows PowerShell 5.1:**
+
+```powershell
+# Tenant ID
+$tenantId = '6fdb5200-3d0d-4a8a-b036-d3685e359adc'
+
+# Subscription ID
+$subscriptionId = 'ffc5e617-7f2d-4ddb-8b57-33fc43989a8c'
+
+# Resource group
+$resourceGroup = '<resource-group>'
+
+# Bastion host name
+$bastionName = '<bastion-name>'
+
+# Jumpbox VM name
+$vmName = '<vm-name>'
+
+# Local SOCKS5 port
+$port = 8228
+
+$tmp = Join-Path $env:TEMP 'bastion-proxy.ps1'
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/action-deployer-vm-bastion-alz/main/bastion-consumer-scripts/bastion-proxy.ps1' -OutFile $tmp
+try {
+  powershell.exe -ExecutionPolicy Bypass -File $tmp `
+    -TenantId       $tenantId `
+    -SubscriptionId $subscriptionId `
+    -ResourceGroup  $resourceGroup `
+    -BastionName    $bastionName `
+    -VmName         $vmName `
+    -Port           $port
 }
 finally {
   Remove-Item $tmp -Force -ErrorAction SilentlyContinue
