@@ -145,6 +145,7 @@ resource "azapi_resource" "python310" {
   }
 }
 
+# tflint-ignore=azurerm_automation_runbook_invalid_runbook_type
 resource "azurerm_automation_runbook" "start_vm" {
   name                     = "Start-JumpboxVM"
   location                 = var.location
@@ -171,6 +172,7 @@ resource "azurerm_automation_runbook" "start_vm" {
   }
 }
 
+# tflint-ignore=azurerm_automation_runbook_invalid_runbook_type
 resource "azurerm_automation_runbook" "create_bastion" {
   count                    = var.enable_bastion && var.enable_bastion_automation ? 1 : 0
   name                     = "Create-BastionHost"
@@ -215,6 +217,7 @@ resource "azurerm_automation_runbook" "create_bastion" {
   }
 }
 
+# tflint-ignore=azurerm_automation_runbook_invalid_runbook_type
 resource "azurerm_automation_runbook" "delete_bastion" {
   count                    = var.enable_bastion && var.enable_bastion_automation ? 1 : 0
   name                     = "Delete-BastionHost"
