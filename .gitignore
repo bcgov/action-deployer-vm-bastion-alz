@@ -68,3 +68,4 @@ infra/.deploy-backend-mode
 # OS / editor noise.
 .DS_Store
 Thumbs.db
+.codebase-memory
