@@ -27,6 +27,9 @@ updates:
     commit-message:
       prefix: "deps(terraform)"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "hashicorp/azurerm"
+        update-types: ["version-update:semver-major"]
     groups:
       terraform:
         patterns:
