@@ -48,7 +48,7 @@ module "monitoring" {
 }
 module "bastion" {
   source  = "Azure/avm-res-network-bastionhost/azurerm"
-  version = "0.9.0"
+  version = "0.10.0"
   count   = var.enable_bastion ? 1 : 0
 
   name                   = "${var.app_name}-bastion"
